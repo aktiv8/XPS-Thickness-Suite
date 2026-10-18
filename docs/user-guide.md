@@ -4,14 +4,14 @@ The XPS Thickness Suite estimates the thickness of thin overlayers (oxides, hydr
 contamination films) from XPS peak areas. It has one window with a tab for each method.
 
 Contents: [Starting the app](#starting-the-app), [The Calculator tab](#the-calculator-tab),
-[The Thickogram tab](#the-thickogram-tab), [Which tab should I use?](#which-tab-should-i-use),
-[Troubleshooting](#troubleshooting).
+[The Thickogram tab](#the-thickogram-tab), [The ARXPS tab](#the-arxps-tab),
+[Which tab should I use?](#which-tab-should-i-use), [Troubleshooting](#troubleshooting).
 
 ## Starting the app
 
 You need Python 3 with Tkinter, which comes with the standard Windows installer. The calculator itself needs nothing
-else. The simulated spectrum, the Thickogram tab and the typeset equations in this documentation also need numpy and
-matplotlib:
+else. The simulated spectrum, the Thickogram and ARXPS tabs and the typeset equations in this documentation also need
+numpy and matplotlib:
 
 ```
 pip install numpy matplotlib
@@ -162,6 +162,77 @@ Take carbon (C 1s at 285 eV) as the overlayer on a silica fibre (Si 2p at 99.5 e
 Thickogram gives **1.85 nm**. Choosing Cylinder (fibre) with Eq. (6) applies a Topofactor of **0.736** and gives a
 corrected thickness of **1.36 nm**.
 
+## The ARXPS tab
+
+![The ARXPS tab with a Si 2p tilt series: spectra at six angles, the integration regions and the table of results](images/arxps.png)
+
+Use this tab when you have measured the same spot at **several emission angles** (a tilt series) and want the
+overlayer thickness from the slope of a line instead of from a single ratio. It reads VAMAS files, finds and aligns the
+peaks, subtracts a Shirley background, integrates the areas and fits the thickness. The method is in
+[Methods](methods.md#angle-resolved-xps-arxps-tab).
+
+### Workflow
+
+The setup has three pages. Work through them from left to right and press **Calculate and plot**.
+
+**1 Data.** Press *Open VAMAS file* and choose a `.vms` file. Then choose:
+
+| Field | What to enter |
+|---|---|
+| Mode | *Two states of one peak* when the overlayer and substrate are two chemical states in one region, for example Si and SiO2 in Si 2p. *Two different peaks* when they are separate regions, for example O 1s over Si 2p |
+| Region | The block (region) to analyse; in the two-peak mode one region for each peak |
+| Angle from | Where the tilt comes from. The K-Alpha stores the stage tilt in experimental variable 1, the default |
+| Offset | Added to the tilt to give the emission angle from the surface normal (0 for the K-Alpha) |
+| Azimuth from | Optional: the field that holds the sample azimuth. If the file has several azimuths each is fitted separately |
+| Max angle | Angles above this are drawn but left out of the fit (default 70 degrees) |
+| Counts per second, Transmission-correct | Normalise the intensities; they cancel for two states of one peak but matter for two different peaks |
+
+**2 Materials.** Optionally choose the substrate and overlayer presets, the same ones as on the Calculator tab: they fill
+the binding energies, lambda for the overlayer and, for two states of one peak, the ratio $R_\infty$ of the two layers
+when infinitely thick. Everything can be edited. For two different peaks enter the sensitivity factors, the binding
+energies and lambda yourself; the photon energy is read from the file.
+
+**3 Windows.** Press *Auto-detect windows*. For two states of one peak this sets the envelope that holds both
+peaks and the energy at which it is split; for two peaks it sets a window round each. The detection uses how the spectrum
+changes with angle, so it also works when the oxide peak is the taller one. **Always check the result on the Spectra
+plot**: the blue and orange areas should cover each state at every angle.
+
+### Reading the results
+
+- The big number is the thickness from the slope of the line through the origin, with the standard error of the fit.
+- **Spectra** shows every angle, aligned and normalised, with the Shirley background and the two integrated areas. Dotted
+  lines are angles left out of the fit.
+- **x vs 1/cos theta** shows the per-angle reduced thickness $x$ against $1/\cos\theta$. For a uniform overlayer the points
+  lie on a straight line through the origin; the dashed line is a free-intercept fit and its offset is the check.
+- **Azimuth** appears as a polar plot when the file has more than one azimuth. The mean thickness is shown, with the
+  spread between azimuths.
+- The table lists, for each angle, the two areas, the ratio, $x$, the thickness from that angle alone and the energy
+  shift that was removed.
+- An amber badge names any problem: an intercept away from the origin, angles left out, fewer than three angles, a
+  peak split that cannot separate overlapping states, or a thickness beyond three attenuation lengths.
+
+![The same data as x against 1/cos theta with the fitted line](images/arxps-fit.png)
+
+### Worked example: a synthetic Si 2p tilt series
+
+The file `docs/sample/si-native-oxide-arxps.vms` is a **synthetic** series (not a measurement) for a 1.5 nm layer of SiO2 on
+silicon, with the peaks drifting by 0.3 eV with tilt, Poisson noise and tilts of 0 to 75 degrees. Open it, choose the
+region Si2p Scan, the presets *Si (metal/elemental)* and *SiO2* (lambda 3.89 nm, $R_\infty$ = 0.555) and press
+*Auto-detect windows*: the envelope is 96.5 to 106.1 eV, split at 100.8 eV. The result is **1.48 nm**, within 0.02 nm of
+the value that was put in. The 75 degree point is left out by the 70 degree limit, and the free-intercept fit passes
+through the origin to within its error.
+
+### Tips
+
+- Use a series with at least three angles spanning a good range of $1/\cos\theta$. Angles between about 0 and 60 degrees
+  are the most reliable.
+- Two states less than about 2 eV apart (for example the oxide and the substrate component of Ga 3d in GaAs) overlap
+  too much for a window split. The tab warns, and the thickness is then only a rough estimate.
+- The thickness uses the attenuation length you give, so its accuracy is limited by that number and by $R_\infty$. The
+  *R-infinity-free* line in the details shows what the data alone prefer.
+- Real data often show an intercept above zero: contamination, roughness and elastic scattering all bend the line. The
+  badge says when it is more than the scatter allows.
+
 ## Which tab should I use?
 
 | Your situation | Use |
@@ -169,6 +240,7 @@ corrected thickness of **1.36 nm**.
 | Oxide on its own metal, one core level, flat sample | Calculator tab |
 | Overlayer and substrate are different elements or different peaks, flat sample | Thickogram tab, shape Flat |
 | Coating on a micro-scale fibre or particle | Thickogram tab with a Topofactor |
+| A tilt series (several emission angles) in a VAMAS file | ARXPS tab |
 | Nanoparticles or nanofibres | Neither: the Topofactor model is not valid at this scale |
 
 For equal kinetic energies the Thickogram reduces exactly to the Strohmeier equation, so the two tabs agree where
@@ -181,6 +253,10 @@ their assumptions overlap.
 - **The equations in this documentation appear as plain text.** The same packages are needed for typeset equations.
 - **A badge turns amber or red.** Read it: it names the problem, for example a thickness beyond the validity limit, a
   binding-energy ratio outside the nomogram scales, or a Topofactor applied off normal emission.
+- **Auto-detect windows fails or the shaded areas look wrong on the ARXPS tab.** Check that the presets (or binding
+  energies) are close to your peaks and that the lowest angle is first; set the envelope and split by hand on the
+  Windows page if the two states are not resolved.
+- **The ARXPS thickness changes a lot when I move the split.** The two states overlap; see the tips under the ARXPS tab.
 - **A preset says it has no binding energy.** Auger presets, such as Cu LMM, carry no binding energy; type the
   binding energy of your own peak.
 - **The numbers look about 30 percent off for copper.** Check that you did not mix the LMM and 2p3/2 presets.

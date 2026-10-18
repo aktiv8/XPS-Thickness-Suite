@@ -77,6 +77,13 @@ try:
 except Exception:
     HAVE_THICKOGRAM = False
 
+# The ARXPS tab (VAMAS tilt series), same optional packages.
+try:
+    from arxps_tab import ARXPSTab
+    HAVE_ARXPS = HAVE_PLOT
+except Exception:
+    HAVE_ARXPS = False
+
 
 # ---------------------------------------------------------------------------
 # Reference data
@@ -689,9 +696,11 @@ class App(tk.Tk):
 
         self.calc_tab = ttk.Frame(nb)
         self.thick_tab = ttk.Frame(nb)
+        self.arxps_tab = ttk.Frame(nb)
         self.help_tab = ttk.Frame(nb)
         nb.add(self.calc_tab, text="Calculator & simulation")
         nb.add(self.thick_tab, text="Thickogram (different core levels)")
+        nb.add(self.arxps_tab, text="ARXPS (tilt series)")
         nb.add(self.help_tab, text="Method / References")
 
         self.history = []  # list of dict rows for CSV export
@@ -700,6 +709,7 @@ class App(tk.Tk):
 
         self._build_calc_tab()
         self._build_thickogram_tab()
+        self._build_arxps_tab()
         self._build_help_tab()
         self.after(150, self._place_sash)
 
@@ -1244,6 +1254,17 @@ class App(tk.Tk):
             return
         self.thickogram = ThickogramTab(self.thick_tab, self, SUBSTRATES, OVERLAYERS, compact=self.compact)
         self.thickogram.pack(fill="both", expand=True, padx=8)
+
+    def _build_arxps_tab(self):
+        """Angle-resolved XPS from a VAMAS tilt series. Needs numpy + matplotlib, like the Thickogram tab."""
+        if not HAVE_ARXPS:
+            ttk.Label(self.arxps_tab, justify="left", padding=20,
+                      text="The ARXPS tab needs numpy and matplotlib:\n\n"
+                           "    pip install numpy matplotlib\n\n"
+                           "then restart the app. The Calculator tab works without them.").pack(anchor="nw")
+            return
+        self.arxps = ARXPSTab(self.arxps_tab, self, SUBSTRATES, OVERLAYERS, volume_density, compact=self.compact)
+        self.arxps.pack(fill="both", expand=True, padx=8)
 
     def _build_help_tab(self):
         """The documentation tab. The rich viewer (docs/*.md with typeset equations) is built the first time the tab

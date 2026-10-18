@@ -1,0 +1,247 @@
+"""
+ARXPS maths tests: background and areas, alignment, auto-detected windows, the fits, and that a thickness put into
+synthetic data is recovered. Synthetic data only (see synthetic.py), so these always run.
+
+    python -m unittest discover -s tests -v
+"""
+import math
+import os
+import sys
+import unittest
+
+import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
+
+import app as A  # noqa: E402
+import arxps as AR  # noqa: E402
+import spectrum_sim as sim  # noqa: E402
+import synthetic as S  # noqa: E402
+import thickogram as TG  # noqa: E402
+
+LAM, RINF = 3.89, 0.5547
+
+
+def _series(blocks, region=None):
+    return [(b.exp_values[0], b) for b in blocks if region is None or b.block_id == region]
+
+
+def _auto(ser, sub=99.3, ov=103.4):
+    return AR.auto_two_state_windows([(b.be_ev, AR.intensity(b)) for _, b in ser], sub, ov)
+
+
+class Background(unittest.TestCase):
+    def test_shirley_recovers_a_peak_on_a_known_shirley_background(self):
+        be = np.arange(90.0, 110.0, 0.1)
+        peak = 1000.0 * sim.pseudo_voigt(be, 100.0, 0.9, 0.0)
+        y = peak + sim.shirley_background(peak, step=120.0, base=30.0)
+        ex = AR.single_peak_area(be, y, AR.Window(94.0, 106.0), align=False)
+        self.assertAlmostEqual(ex.area_sub, 1000.0, delta=15.0)      # 1.5%: the window cuts a sliver of the tails
+
+    def test_shirley_is_flat_for_a_flat_spectrum(self):
+        bg = AR.shirley(np.full(50, 7.0), 0.1)
+        self.assertTrue(np.allclose(bg, 7.0))
+
+    def test_intensity_per_second_makes_different_scan_counts_comparable(self):
+        b = S.two_state_series(noise=False)[0]
+        longer = S.two_state_series(noise=False)[0]
+        longer.counts, longer.scans = b.counts * 1.5, 6
+        self.assertTrue(np.allclose(AR.intensity(b), AR.intensity(longer)))
+        self.assertFalse(np.allclose(AR.intensity(b, per_second=False), AR.intensity(longer, per_second=False)))
+
+
+class Alignment(unittest.TestCase):
+    def test_shift_of_a_shoulder_with_a_taller_neighbour_is_found(self):
+        be = np.arange(10.0, 30.0, 0.1)
+
+        def spec(shift):
+            return (800 * sim.pseudo_voigt(be, 20.0 + shift, 1.2, 0.0)         # tall overlayer-like peak
+                    + 300 * sim.pseudo_voigt(be, 18.7 + shift, 0.9, 0.0))      # the substrate is only a shoulder
+        for shift in (-0.6, 0.0, 0.37, 0.8):
+            got = AR.xcorr_shift(be, spec(0.0), be, spec(shift), 14.0, 25.0)
+            self.assertAlmostEqual(got, shift, delta=0.02)
+
+    def test_windows_follow_a_charging_drift_and_report_the_shifts(self):
+        ser = _series(S.two_state_series(drift_ev=0.3))
+        res = AR.analyse_two_states(ser, _auto(ser), LAM, RINF)
+        got = [r.shift_ev for r in res.rows]
+        want = [0.3 * t / 75.0 for t in S.DEFAULT_TILTS]
+        for g, w in zip(got, want):
+            self.assertAlmostEqual(g, w, delta=0.02)
+        # the drift must not leak into the thickness
+        self.assertAlmostEqual(res.d_nm, 1.5, delta=0.03)
+
+
+class AutoWindows(unittest.TestCase):
+    def test_finds_substrate_and_overlayer_states_and_a_split_between_them(self):
+        w = _auto(_series(S.two_state_series()))
+        self.assertAlmostEqual(w.sub_pos, 99.0, delta=0.15)
+        self.assertAlmostEqual(w.ov_pos, 103.0, delta=0.2)
+        self.assertTrue(w.sub_pos < w.split < w.ov_pos)
+        self.assertLess(w.env_lo, w.sub_pos)
+        self.assertGreater(w.env_hi, w.ov_pos)
+
+    def test_a_thick_overlayer_that_is_the_taller_peak_is_not_mistaken_for_the_substrate(self):
+        ser = _series(S.two_state_series(d_nm=4.0))
+        w = _auto(ser)
+        self.assertLess(w.sub_pos, w.ov_pos)
+        self.assertAlmostEqual(w.sub_pos, 99.0, delta=0.2)
+        res = AR.analyse_two_states(ser, w, LAM, RINF)
+        self.assertAlmostEqual(res.d_nm, 4.0, delta=0.08)
+
+    def test_needs_two_angles(self):
+        b = S.two_state_series(tilts=(0.0,))[0]
+        with self.assertRaises(ValueError):
+            AR.auto_two_state_windows([(b.be_ev, AR.intensity(b))], 99.3, 103.4)
+
+
+class Recovery(unittest.TestCase):
+    def test_two_states_recovers_the_thickness_from_noise_free_data(self):
+        for d in (0.8, 1.5, 2.6):
+            ser = _series(S.two_state_series(d_nm=d))
+            res = AR.analyse_two_states(ser, _auto(ser), LAM, RINF, max_angle=80)
+            self.assertAlmostEqual(res.d_nm, d, delta=0.02 * d + 0.01, msg=f"d = {d}")
+            self.assertLess(res.d_se_nm, 0.01)
+            self.assertAlmostEqual(res.line[0], 0.0, delta=0.01)              # passes through the origin
+            self.assertEqual(res.warnings, [])
+
+    def test_two_states_with_noise_and_lorentzian_tails_is_close(self):
+        ser = _series(S.two_state_series(d_nm=1.5, noise=True, lorentz=0.2, seed=3))
+        res = AR.analyse_two_states(ser, _auto(ser), LAM, RINF)
+        self.assertAlmostEqual(res.d_nm, 1.5, delta=0.15)
+
+    def test_per_angle_thickness_equals_the_calculator_strohmeier_function(self):
+        n_sub, n_ov, lam_sub, lam_ov = 0.0830, 0.0366, 3.09, 3.89
+        rinf = n_ov * lam_ov / (n_sub * lam_sub)
+        ser = _series(S.two_state_series(d_nm=1.5, lam_nm=lam_ov, rinf=rinf))
+        res = AR.analyse_two_states(ser, _auto(ser), lam_ov, rinf, max_angle=80)
+        for r in res.rows:
+            want = A.strohmeier_thickness(90.0 - r.angle_deg, n_sub, lam_sub, 1.0, r.i_sub,
+                                          [A.OverlayerInput("ox", n_ov, lam_ov, 1.0, r.i_ov)])["d_nm"]
+            self.assertAlmostEqual(r.d_nm, want, places=9, msg=f"{r.tilt} deg")
+
+    def test_two_peaks_recovers_the_thickness_and_matches_the_thickogram_per_angle(self):
+        blocks = S.two_peak_series(d_nm=1.5)
+        sub, ov = _series(blocks, "Si2p Scan"), _series(blocks, "O1s Scan")
+        sw = AR.auto_peak_window([(b.be_ev, AR.intensity(b)) for _, b in sub], 99.3)
+        ow = AR.auto_peak_window([(b.be_ev, AR.intensity(b)) for _, b in ov], 532.0)
+        res = AR.analyse_two_peaks(sub, ov, sw, ow, 2.93, 0.82, 532.0, 99.3, 1486.68, 3.0, max_angle=80)
+        self.assertAlmostEqual(res.d_nm, 1.5, delta=0.015)
+        self.assertAlmostEqual(res.b, ((1486.68 - 532.0) / (1486.68 - 99.3)), places=9)
+        for r in res.rows:
+            want = TG.thickness(io=r.i_ov, is_=r.i_sub, so=2.93, ss=0.82, be_o=532.0, be_s=99.3, source_ev=1486.68,
+                                lam_nm=3.0, theta_normal_deg=r.angle_deg).t_nm
+            self.assertAlmostEqual(r.d_nm, want, places=9)
+
+    def test_angle_offset_shifts_the_emission_angle(self):
+        ser = _series(S.two_state_series(tilts=(0.0, 20.0, 40.0)))
+        res = AR.analyse_two_states(ser, _auto(ser), LAM, RINF, angle_offset=10.0)
+        self.assertEqual([r.angle_deg for r in res.rows], [10.0, 30.0, 50.0])
+
+
+class Fits(unittest.TestCase):
+    def test_through_origin_slope_and_error(self):
+        u = [1.0, 1.4, 2.0, 3.0]
+        k, se = AR.fit_through_origin(u, [0.4 * v for v in u])
+        self.assertAlmostEqual(k, 0.4, places=12)
+        self.assertAlmostEqual(se, 0.0, places=12)
+        self.assertIsNone(AR.fit_through_origin([1.0], [0.4])[1])
+
+    def test_free_intercept_line(self):
+        u = np.array([1.0, 1.4, 2.0, 3.0])
+        c, k, se_c, se_k = AR.fit_line(u, 0.2 + 0.3 * u)
+        self.assertAlmostEqual(c, 0.2, places=10)
+        self.assertAlmostEqual(k, 0.3, places=10)
+        self.assertIsNone(AR.fit_line([1.0, 2.0], [0.1, 0.2]))
+
+    def test_rinf_free_fit_recovers_both_parameters(self):
+        u = np.array([1.0, 1.155, 1.414, 2.0, 2.9])
+        r = 0.55 * np.expm1(0.42 * u)
+        fit = AR.fit_rinf_free(u, r)
+        self.assertAlmostEqual(fit["k"], 0.42, delta=0.002)
+        self.assertAlmostEqual(fit["rinf"], 0.55, delta=0.005)
+        self.assertFalse(fit["edge"])
+
+    def test_rinf_free_fit_says_when_the_ratio_is_just_linear_in_u(self):
+        u = np.array([1.0, 1.155, 1.414, 2.0])
+        self.assertTrue(AR.fit_rinf_free(u, 0.3 * u)["edge"])
+
+    def _rows(self, xs, tilts, rinf=0.55):
+        return [AR.AngleRow(t, t, 100.0, 100.0 * rinf * math.expm1(x), rinf * math.expm1(x))
+                for t, x in zip(tilts, xs)]
+
+    def test_a_series_that_misses_the_origin_raises_the_intercept_warning(self):
+        tilts = [0, 20, 40, 55, 65]
+        u = [1 / math.cos(math.radians(t)) for t in tilts]
+        rows = self._rows([0.25 + 0.2 * v for v in u], tilts)
+        res = AR.fit_series(rows, 3.0, lambda r: math.log1p(r / 0.55), 70.0, 1, rinf=0.55)
+        self.assertTrue(any("free-intercept" in w for w in res.warnings))
+
+    def test_a_clean_series_has_no_warnings(self):
+        tilts = [0, 20, 40, 55, 65]
+        u = [1 / math.cos(math.radians(t)) for t in tilts]
+        res = AR.fit_series(self._rows([0.3 * v for v in u], tilts), 3.0, lambda r: math.log1p(r / 0.55), 70.0, 1,
+                            rinf=0.55)
+        self.assertEqual(res.warnings, [])
+        self.assertAlmostEqual(res.d_nm, 0.9, places=9)
+
+    def test_angles_above_the_maximum_are_shown_but_not_fitted(self):
+        tilts = [0, 30, 60, 75]
+        u = [1 / math.cos(math.radians(t)) for t in tilts]
+        xs = [0.3 * v for v in u]
+        xs[-1] *= 0.5                                      # a bad grazing point
+        res = AR.fit_series(self._rows(xs, tilts), 3.0, lambda r: math.log1p(r / 0.55), 70.0, 1, rinf=0.55)
+        self.assertEqual([r.used for r in res.rows], [True, True, True, False])
+        self.assertIsNotNone(res.rows[-1].x)
+        self.assertAlmostEqual(res.d_nm, 0.9, places=9)
+        self.assertTrue(any("75 deg" in w for w in res.warnings))
+
+    def test_zero_area_angles_are_skipped_with_a_warning_and_no_usable_angle_raises(self):
+        rows = [AR.AngleRow(0.0, 0.0, 100.0, 0.0, 0.0), AR.AngleRow(30.0, 30.0, 100.0, 20.0, 0.2),
+                AR.AngleRow(50.0, 50.0, 100.0, 30.0, 0.3)]
+        res = AR.fit_series(rows, 3.0, lambda r: math.log1p(r / 0.55), 70.0, 1, rinf=0.55)
+        self.assertEqual([r.used for r in res.rows], [False, True, True])
+        self.assertTrue(any("0 deg skipped" in w for w in res.warnings))
+        with self.assertRaises(ValueError):
+            AR.fit_series([AR.AngleRow(0.0, 0.0, 100.0, 0.0, 0.0)], 3.0, lambda r: r, 70.0, 1)
+
+    def test_few_angles_warn(self):
+        tilts = [0, 40]
+        u = [1 / math.cos(math.radians(t)) for t in tilts]
+        res = AR.fit_series(self._rows([0.3 * v for v in u], tilts), 3.0, lambda r: math.log1p(r / 0.55), 70.0, 1,
+                            rinf=0.55)
+        self.assertTrue(any("3 or more" in w for w in res.warnings))
+
+    def test_unresolved_states_raise_the_overlap_warning(self):
+        ser = _series(S.two_state_series(sub_be=98.9, ov_be=100.3, fwhm_sub=0.9, fwhm_ov=1.1, drift_ev=0.0))
+        res = AR.analyse_two_states(ser, AR.TwoStateWindows(96.4, 103.0, 99.6), LAM, RINF)
+        self.assertTrue(any("less than 2 eV apart" in w for w in res.warnings))
+
+    def test_resolved_states_do_not(self):
+        ser = _series(S.two_state_series())
+        res = AR.analyse_two_states(ser, _auto(ser), LAM, RINF)
+        self.assertFalse(any("apart" in w for w in res.warnings))
+
+
+class Azimuths(unittest.TestCase):
+    def test_each_azimuth_is_fitted_separately_and_summarised(self):
+        blocks = S.two_state_series(azimuths=(0.0, 90.0), d_by_azimuth={0.0: 1.2, 90.0: 1.8})
+        from vamas import VamasFile
+        f = VamasFile("", blocks)
+        series = f.series("Si2p Scan", "exp1", "exp2")
+        w = _auto(series[0.0])
+        results = {az: AR.analyse_two_states(rows, w, LAM, RINF, max_angle=80) for az, rows in series.items()}
+        self.assertAlmostEqual(results[0.0].d_nm, 1.2, delta=0.03)
+        self.assertAlmostEqual(results[90.0].d_nm, 1.8, delta=0.04)
+        mean, spread = AR.summarise_azimuths(results)
+        self.assertAlmostEqual(mean, 1.5, delta=0.04)
+        self.assertAlmostEqual(spread, 0.6 / math.sqrt(2), delta=0.05)
+
+    def test_single_azimuth_has_no_spread(self):
+        ser = _series(S.two_state_series())
+        res = {None: AR.analyse_two_states(ser, _auto(ser), LAM, RINF)}
+        self.assertIsNone(AR.summarise_azimuths(res)[1])
+
+
+if __name__ == "__main__":
+    unittest.main()

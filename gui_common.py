@@ -85,6 +85,20 @@ def setup_style(root, compact=False):
     style.map("TNotebook.Tab", background=[("selected", CARD), ("active", "#e9edf2")],
               foreground=[("selected", ACCENT)], padding=[("selected", (18, 9))])
 
+    # Small notebook used inside a tab (the ARXPS setup pages), a radio button on a card, and the results table.
+    style.configure("Sub.TNotebook", background=CARD, borderwidth=0, tabmargins=(0, 2, 0, 0))
+    style.configure("Sub.TNotebook.Tab", background="#e8ecf1", foreground=MUTED, padding=(12, 4),
+                    font=("Segoe UI", base, "bold"))
+    style.map("Sub.TNotebook.Tab", background=[("selected", CARD), ("active", "#e9edf2")],
+              foreground=[("selected", ACCENT)])
+    style.configure("Card.TRadiobutton", background=CARD, foreground=INK)
+    style.map("Card.TRadiobutton", background=[("active", CARD)])
+    style.configure("Treeview", background="#ffffff", fieldbackground="#ffffff", rowheight=20 if compact else 22,
+                    font=("Segoe UI", base - 1), bordercolor=BORDER)
+    style.configure("Treeview.Heading", background=BTN, foreground=INK, font=("Segoe UI", base - 1, "bold"),
+                    relief="raised")
+    style.map("Treeview", background=[("selected", "#dbe8fb")], foreground=[("selected", INK)])
+
     style.configure("Horizontal.TScale", background=CARD, troughcolor="#d1d5db")
     style.configure("TPanedwindow", background=BG)
     style.configure("Sash", sashthickness=10, gripcount=16, handlesize=14)

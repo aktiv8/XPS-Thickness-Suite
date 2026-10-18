@@ -368,6 +368,10 @@ def _group(s, i):
                 return s[i + 1:j], j + 1
             j += 1
         return s[i + 1:], len(s)
+    if i < len(s) and s[i] == "\\":                       # an unbraced command, as in R_\infty
+        m = re.match(r"\\([A-Za-z]+|.)", s[i:])
+        if m:
+            return m.group(0), i + len(m.group(0))
     return (s[i], i + 1) if i < len(s) else ("", i)
 
 

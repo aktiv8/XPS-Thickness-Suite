@@ -15,9 +15,11 @@ ROOT = os.path.join(os.path.dirname(__file__), os.pardir)
 sys.path.insert(0, ROOT)
 
 import app as A  # noqa: E402
+import arxps as AR  # noqa: E402
 import help_viewer as H  # noqa: E402
 import thickogram as T  # noqa: E402
 import topofactor as TFAC  # noqa: E402
+import vamas as VM  # noqa: E402
 
 DOCS = os.path.join(ROOT, "docs")
 
@@ -110,6 +112,10 @@ class Citations(unittest.TestCase):
                     "10.1002/sia.740150109",               # Strohmeier 1990
                     "10.1002/sia.6239",                    # Biesinger 2017
                     "10.1002/sia.740210302",               # Tanuma, Powell, Penn 1994 (TPP-2M)
+                    "10.1016/0368-2048(94)02270-4",        # Cumpson 1995 (angle-resolved XPS)
+                    "10.1002/(SICI)1096-9918(199706)25:6<430::AID-SIA254>3.0.CO;2-7",   # Cumpson, Seah 1997
+                    "10.1103/PhysRevB.5.4709",             # Shirley 1972
+                    "10.1002/sia.740130202",               # Dench, Hazell, Seah 1988 (VAMAS)
                     "10.1002/1096-9918(200006)29:6<403::AID-SIA884>3.0.CO;2-8"):   # Cumpson 2000
             self.assertTrue(doi in refs, f"references.md lacks the DOI {doi}")
         self.assertTrue("XPS topofactors: determining overlayer thickness on particles and" in refs)
@@ -163,6 +169,34 @@ class ClaimsMatchTheCode(unittest.TestCase):
         self.assertIn(f"**{r.t_nm:.2f} nm**", guide)
         self.assertIn(f"**{c.tf:.3f}**", guide)
         self.assertIn(f"**{c.t_nm:.2f} nm**", guide)
+
+    def test_arxps_worked_example_and_sample_file(self):
+        sample = os.path.join(DOCS, "sample", "si-native-oxide-arxps.vms")
+        sub, ov = A.SUBSTRATES["Si (metal/elemental)"], A.OVERLAYERS["SiO2"]
+        n = lambda c: A.volume_density(c.density_g_cm3, c.molar_mass_g_mol, c.atoms_per_formula)   # noqa: E731
+        rinf = ov.rsf * n(ov) * ov.imfp_nm / (sub.rsf * n(sub) * sub.imfp_nm)
+        series = VM.read(sample).series("Si2p Scan", "exp1")[None]
+        w = AR.auto_two_state_windows([(b.be_ev, AR.intensity(b)) for _, b in series], sub.be_ev, ov.be_ev)
+        res = AR.analyse_two_states(series, w, ov.imfp_nm, rinf)
+        guide = _read("user-guide.md")
+        self.assertIn(f"**{res.d_nm:.2f} nm**", guide)
+        self.assertIn(f"the envelope is {w.env_lo:.1f} to {w.env_hi:.1f} eV, split at {w.split:.1f} eV", guide)
+        self.assertIn(f"lambda {ov.imfp_nm:g} nm, $R_\\infty$ = {rinf:.3f}", guide)
+        self.assertAlmostEqual(res.d_nm, 1.5, delta=0.02)               # "within 0.02 nm of the value put in"
+        self.assertEqual([r.tilt for r in res.rows if not r.used], [75.0])
+        self.assertAlmostEqual(res.line[0], 0.0, delta=2 * res.line[2])
+
+    def test_the_sample_file_is_what_the_generator_writes(self):
+        import tempfile
+        spec = importlib.util.spec_from_file_location("make_sample_data", os.path.join(DOCS, "make_sample_data.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as d:
+            fresh = os.path.join(d, "s.vms")
+            import synthetic
+            synthetic.write_sample(fresh, d_nm=mod.TRUE_THICKNESS_NM)
+            with open(fresh, "rb") as a, open(mod.SAMPLE, "rb") as b:
+                self.assertEqual(a.read(), b.read(), "docs/sample is stale: run  python docs/make_sample_data.py")
 
     def test_table_1_and_the_constants_in_methods(self):
         methods = _read("methods.md")

@@ -5,7 +5,8 @@ Regenerate the screenshots used in the documentation by driving the real window.
 
 Windows (it grabs the window rectangle with PIL.ImageGrab) and needs a visible display, numpy and matplotlib. Don't
 touch the mouse while it runs: the window is brought to the front and captured. Writes docs/images/calculator.png,
-calculator-cu.png and thickogram.png. The inputs are the worked examples quoted in docs/user-guide.md.
+calculator-cu.png, thickogram.png, arxps.png and arxps-fit.png. The inputs are the worked examples quoted in
+docs/user-guide.md (the ARXPS one uses the synthetic file docs/sample/si-native-oxide-arxps.vms).
 """
 import os
 import sys
@@ -16,6 +17,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 from PIL import ImageGrab  # noqa: E402
 
 import app as A  # noqa: E402
+import make_sample_data  # noqa: E402
 import topofactor as TF  # noqa: E402
 
 IMAGES = os.path.join(HERE, "images")
@@ -92,6 +94,25 @@ def main():
     tab.calculate()
     settle(app)
     grab(app, "thickogram.png")
+
+    nb.select(app.arxps_tab)                       # the ARXPS worked example: the synthetic sample file
+    tab = app.arxps
+    tab.load_file(make_sample_data.SAMPLE)
+    tab.v["region"].set("Si2p Scan")
+    tab._region_changed()
+    tab.sub_preset.set("Si (metal/elemental)")
+    tab._apply_preset("sub")
+    tab.ov_preset.set("SiO2")
+    tab._apply_preset("ov")
+    tab.auto_windows()
+    tab.calculate()
+    settle(app)
+    tab.plot_nb.select(0)
+    settle(app)
+    grab(app, "arxps.png")
+    tab.plot_nb.select(1)
+    settle(app)
+    grab(app, "arxps-fit.png")
     app.destroy()
 
 

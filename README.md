@@ -2,7 +2,7 @@
 
 Desktop tools for estimating the thickness of thin overlayers (oxides, hydroxides, nitrides, passivation layers,
 contamination films) from XPS peak areas. One window, one tab per method, with a simulated spectrum, the classic
-Thickogram nomogram, and Topofactor corrections for fibres and particles.
+Thickogram nomogram, Topofactor corrections for fibres and particles, and angle-resolved analysis of VAMAS tilt series.
 
 ![The Calculator tab](docs/images/calculator.png)
 
@@ -12,9 +12,12 @@ Thickogram nomogram, and Topofactor corrections for fibres and particles.
 |---|---|---|
 | **Calculator and simulation** | Strohmeier equation | The overlayer and substrate are two chemical states of the **same core level** (metal and oxide components of Al 2p, Cu LMM, Si 2p ...). Uses densities and IMFPs and draws a simulated spectrum. |
 | **Thickogram** | Cumpson's Thickogram, with optional Topofactor | The overlayer and substrate are **different peaks** (a Fe 2p overlayer on Si 2p). Uses RSFs and kinetic-energy scaling and draws the nomogram. The Topofactor corrects for **fibres and particles**. |
+| **ARXPS (tilt series)** | Ratio against 1/cos(theta) from a VAMAS tilt series | You measured the **same spot at several emission angles**. Reads VAMAS files, aligns the peaks, subtracts a Shirley background, fits the thickness from the slope and plots it against azimuth if the file has one. |
 | **Method / References** | | The full documentation, with typeset equations, inside the app. |
 
 ![The Thickogram tab with a cylinder Topofactor applied](docs/images/thickogram.png)
+
+![The ARXPS tab analysing a synthetic Si 2p tilt series](docs/images/arxps.png)
 
 ## Quick start
 
@@ -49,6 +52,13 @@ T = \mathrm{TF}\cdot t, \qquad \mathrm{TF} \approx c_0 + \left(c_1 + c_2\ln B\ri
 with shape-dependent constants from Shard, Wang and Spencer (0.79 for a long fibre and 0.67 for a sphere are good
 averages). Topofactors apply to objects much larger than the electron attenuation length, not to nanoparticles.
 
+For a tilt series the reduced thickness $x_i = d/(\lambda\cos\theta_i)$ found at each angle lies on a straight line
+through the origin when plotted against $1/\cos\theta$, and the slope gives the thickness [12]
+
+```math
+x_i = k\,u_i,\qquad u_i = \frac{1}{\cos\theta_i},\qquad d = k\,\lambda
+```
+
 ## Documentation
 
 - [User guide](docs/user-guide.md): how to use each tab, with worked examples.
@@ -74,9 +84,12 @@ display skip themselves when they are not available.
 - `app.py`: the window, the Calculator tab, the presets and the Strohmeier calculation.
 - `thickogram.py`, `thickogram_tab.py`: Cumpson's Thickogram (maths, nomogram, tab).
 - `topofactor.py`: the Topofactor correction.
+- `arxps.py`, `arxps_tab.py`: angle-resolved analysis (alignment, Shirley background, areas, fits; the tab).
+- `vamas.py`: VAMAS reader and writer. `synthetic.py`: synthetic tilt series for tests and the sample file.
 - `spectrum_sim.py`: simulated spectra (numpy only).
 - `help_viewer.py`, `gui_common.py`: the in-app documentation viewer and shared GUI styling.
 - `docs/`: the documentation sources and the scripts that regenerate its figures, screenshots and preset tables.
+- `docs/sample/`: a synthetic VAMAS tilt series to try the ARXPS tab on.
 - `legacy/thickogram_v1_3.py`: the original standalone Thickogram script, unmodified, for provenance.
 - `tests/`, `NOTICE`.
 
@@ -90,6 +103,9 @@ display skip themselves when they are not available.
   correction.
 - M. C. Biesinger, *Surf. Interface Anal.* **49**, 1325 (2017), and T. A. Carlson and G. E. McGuire, *J. Electron
   Spectrosc. Relat. Phenom.* **1**, 161 (1972/73): preset data.
+- P. J. Cumpson, *J. Electron Spectrosc. Relat. Phenom.* **73**, 25 (1995), and ISO 14701: angle-resolved XPS. D. A.
+  Shirley, *Phys. Rev. B* **5**, 4709 (1972): the Shirley background. W. A. Dench, L. B. Hazell and M. P. Seah,
+  *Surf. Interface Anal.* **13**, 63 (1988): the VAMAS format.
 - S. Tanuma, C. J. Powell and D. R. Penn, *Surf. Interface Anal.* **21**, 165 (1994): the TPP-2M IMFP equation.
 
 The full list is in [docs/references.md](docs/references.md).

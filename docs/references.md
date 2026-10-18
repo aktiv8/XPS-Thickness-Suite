@@ -37,7 +37,25 @@ only where they were checked against the paper itself or a bibliographic record.
 11. Thermo Scientific Avantage, the `Densities.txt` table of densities and band gaps used for the Si, SiO2, Si3N4, Ti
     and TiO2 presets and several others.
 
+## Angle-resolved XPS and file formats
+
+12. P. J. Cumpson, Angle-resolved XPS and AES: depth-resolution limits and a general comparison of properties of
+    depth-profile reconstruction methods, *J. Electron Spectrosc. Relat. Phenom.* **73**, 25-52 (1995). DOI
+    [10.1016/0368-2048(94)02270-4](https://doi.org/10.1016/0368-2048(94)02270-4).
+13. P. J. Cumpson and M. P. Seah, Elastic scattering corrections in AES and XPS. II. Estimating attenuation lengths and
+    conditions required for their valid use in overlayer/substrate experiments, *Surf. Interface Anal.* **25**, 430-446
+    (1997). DOI `10.1002/(SICI)1096-9918(199706)25:6<430::AID-SIA254>3.0.CO;2-7`.
+14. ISO 14701:2018, Surface chemical analysis - X-ray photoelectron spectroscopy - Measurement of silicon oxide
+    thickness. A standard, so there is no DOI.
+15. D. A. Shirley, High-resolution X-ray photoemission spectrum of the valence bands of gold, *Phys. Rev. B* **5**,
+    4709-4714 (1972). DOI [10.1103/PhysRevB.5.4709](https://doi.org/10.1103/PhysRevB.5.4709). The origin of the Shirley
+    background.
+16. W. A. Dench, L. B. Hazell and M. P. Seah, VAMAS surface chemical analysis standard data transfer format with
+    skeleton decoding programs, *Surf. Interface Anal.* **13**, 63-122 (1988). DOI
+    [10.1002/sia.740130202](https://doi.org/10.1002/sia.740130202).
+
 ## Citing
 
 If you use the Topofactor correction in published work, please cite the paper by Shard and co-workers [4] and the
-Thickogram paper by Cumpson [3]. For the Strohmeier calculator cite [1], and for the Cu presets [5].
+Thickogram paper by Cumpson [3]. For the Strohmeier calculator cite [1], and for the Cu presets [5]. For the
+angle-resolved analysis see [12] and [14].

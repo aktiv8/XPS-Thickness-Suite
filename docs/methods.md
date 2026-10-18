@@ -5,11 +5,12 @@ square brackets, such as [3], refer to the [reference list](references.md#refere
 
 Contents: [Overview](#overview), [Strohmeier equation](#strohmeier-equation-calculator-tab),
 [Thickogram](#thickogram-thickogram-tab), [Topofactors](#topofactors-fibres-and-particles),
-[Spectrum simulation](#spectrum-simulation), [IMFPs from TPP-2M](#imfps-from-tpp-2m).
+[Angle-resolved XPS](#angle-resolved-xps-arxps-tab), [Spectrum simulation](#spectrum-simulation),
+[IMFPs from TPP-2M](#imfps-from-tpp-2m).
 
 ## Overview
 
-All three methods assume a **uniform overlayer of constant thickness on a semi-infinite substrate**, with the
+All the methods assume a **uniform overlayer of constant thickness on a semi-infinite substrate**, with the
 overlayer and substrate signals separable by peak fitting. They differ in which signals are compared.
 
 | Method | Signals compared | Needs | Valid for |
@@ -17,6 +18,7 @@ overlayer and substrate signals separable by peak fitting. They differ in which 
 | Strohmeier (Calculator tab) | Two chemical states of the same core level, for example metallic Al and Al oxide in Al 2p | Densities, IMFPs | Flat samples, thickness up to about 3 IMFPs |
 | Thickogram (Thickogram tab) | Two different peaks, for example Fe 2p overlayer and Si 2p substrate | RSFs, kinetic energies, attenuation length | Flat samples |
 | Topofactor (Thickogram tab) | Correction applied to the Thickogram result | Sample shape | Fibres and particles much larger than the attenuation length |
+| ARXPS (ARXPS tab) | The same signals as above, measured at several emission angles from a VAMAS tilt series | Presets or RSFs, lambda, a tilt series | Flat samples, emission angles up to about 70 degrees |
 
 ## Strohmeier equation (Calculator tab)
 
@@ -227,6 +229,108 @@ follows the thickness and $B$, and **Constant average**.
   about 0.79, within 10 percent of the cylinder value.
 - **Inconsistency in the paper.** Table 1 is captioned as parameters for Eqn (7) but belongs to Eqn (6). The sphere
   value 0.67 is quoted at $t = 1.5$ in the text and at $T = 1.5$ in Table 2; Eq. 6 gives 0.66 at $t = 1.5$.
+
+## Angle-resolved XPS (ARXPS tab)
+
+Measuring the same spot at several emission angles $\theta$ (from the surface normal) changes the path length of the
+photoelectrons through the overlayer to $d/\cos\theta$. The overlayer to substrate ratio therefore grows with angle in
+a way that depends only on the thickness, so a tilt series gives the thickness from the **slope** of a line rather than
+from a single ratio [12]. Departures from a straight line show up as a warning instead of a silent error.
+
+### From ratios to a line
+
+At each angle the tab turns the measured ratio into the reduced thickness $x_i = d/(\lambda\cos\theta_i)$, using the
+same equations as the other tabs. For two states of one core level (the Strohmeier case, Calculator tab) with
+$R_i = I_{ov}/I_{sub}$ at angle $i$:
+
+```math
+x_i = \ln\left(1+\frac{R_i}{R_\infty}\right),\qquad R_\infty = \frac{S_{ov}\,N_{ov}\,\lambda_{ov}}{S_{sub}\,N_{sub}\,\lambda_{sub}}
+```
+
+where $R_\infty$ is the ratio for infinitely thick layers, built from the presets exactly as on the Calculator tab. For two
+different peaks (the Thickogram case) $x_i$ is the root of $A_i = (1-e^{-x_i})\,e^{B x_i}$ with $A_i$ and $B$ as in the
+[Thickogram](#thickogram-thickogram-tab) section; the first form is the special case $B = 1$. In both cases
+
+```math
+x_i = k\,u_i,\qquad u_i = \frac{1}{\cos\theta_i},\qquad k = \frac{d}{\lambda}
+```
+
+so a plot of $x_i$ against $1/\cos\theta$ is a straight line through the origin whose slope is $d/\lambda$, with
+$\lambda$ the attenuation length of the overlayer electrons in the overlayer. The tab fits the line through the origin
+by least squares and reports the thickness and its standard error:
+
+```math
+k = \frac{\sum_i u_i x_i}{\sum_i u_i^{2}},\qquad d = k\,\lambda,\qquad \sigma_k = \sqrt{\frac{\sum_i \left(x_i - k\,u_i\right)^{2}}{(n-1)\sum_i u_i^{2}}}
+```
+
+The error covers the scatter between angles only, not the uncertainty in $\lambda$ or $R_\infty$, which are usually larger.
+Two cross-checks are shown with it:
+
+- A **free-intercept fit** $x = c + k\,u$. A line that does not pass through the origin means the windows, $R_\infty$ or
+  the angle offset are wrong, or the layer is not uniform (for example contamination on top, or roughness). The tab
+  warns when the intercept is clearly non-zero.
+- For two states of one peak, an **$R_\infty$-free fit** of $R_i = R_\infty\left(e^{k u_i}-1\right)$ for both $k$ and
+  $R_\infty$. It shows how much the answer depends on the densities, IMFPs and sensitivity factors in the presets.
+  When $R$ is almost proportional to $1/\cos\theta$ the data cannot separate the two parameters, and the tab says so.
+
+### Peak areas
+
+The areas come from the spectra themselves, with no fitting of line shapes:
+
+1. **Alignment.** Charging and the flood gun move the peaks by a few tenths of an electronvolt between angles. Each
+   spectrum is shifted to match the previous (already aligned) one by minimising the squared difference between the
+   two line shapes inside the envelope, each scaled to unit height, then refined below the step size. Matching shapes
+   rather than peak maxima works when the taller peak is the overlayer, and for shoulders. The shifts are listed in
+   the table.
+2. **Background.** A Shirley background [15] is computed over the envelope (two states) or each window (two peaks), with
+   the ends set by the mean of the first and last three points:
+
+```math
+B(E) = I_{low} + \left(I_{high}-I_{low}\right)\frac{\int_{E_{low}}^{E}\left[I(E^{\prime})-B(E^{\prime})\right]dE^{\prime}}{\int_{E_{low}}^{E_{high}}\left[I(E^{\prime})-B(E^{\prime})\right]dE^{\prime}}
+```
+
+3. **Areas.** The background-subtracted signal is integrated. For two states of one peak a single background is used
+   across both, and the signal is split at one energy between them (the valley between the peaks).
+4. **Automatic windows.** The substrate state is found as the place where the normalised spectrum falls from the lowest
+   to the highest angle, and the overlayer state where it rises, near the binding energies of the presets. This tells
+   them apart even when the oxide peak is the taller one.
+
+Counts are divided by scans times dwell time (the K-Alpha stores raw counts summed over the scans) and by the
+transmission function of the file. Both cancel for two states of one peak but matter when two different peaks are
+compared.
+
+### Limits
+
+- **Overlapping states.** A window split cannot separate peaks that are less than about 2 eV apart or that merge,
+  as the oxide and substrate components of Ga 3d on an oxidised GaAs wafer do. The tab warns; peak fitting would be needed and is not
+  implemented.
+- **Grazing angles.** Above about 70 degrees elastic scattering, roughness and surface contamination make the simple
+  exponential unreliable, and the effective attenuation length differs from the IMFP [13]. Those angles are drawn
+  but excluded from the fit (the limit is editable).
+- **Non-uniform layers.** Islands, roughness and an over-layer of adventitious carbon all bend the line. The ratio of
+  two states of one peak is largely unaffected by a carbon layer on top, because both are attenuated alike, but the
+  thickness and the intercept check then describe the oxide only.
+- **Angle convention.** The emission angle is the stage tilt plus an offset (default 0) and is measured from the
+  surface normal, as on the Thickogram tab. The K-Alpha lens axis is along the normal at zero tilt; for an instrument
+  where it is not, set the offset. A tilt series is also not strictly depth profiling: it needs the sample to be
+  flat and to stay at the analysis position as it tilts. ISO 14701 [14] describes the method for silicon oxide on silicon.
+
+### Azimuth
+
+If the file records the sample azimuth (rotation about the surface normal) as well as the tilt, the tab reads both,
+groups the blocks by azimuth, fits each azimuth separately and reports the mean thickness and the spread between
+azimuths. A plot of thickness against azimuth is drawn in polar form. The thickness of a uniform layer does not depend
+on azimuth, so a systematic variation points to something else: a crystalline substrate, where photoelectron diffraction
+and forward focusing change the intensity ratios with azimuth and polar angle, a structured surface, or a sample
+that moves off the analysis spot as it rotates. The suite reports the variation and does not correct for it.
+
+### VAMAS files
+
+The tab reads VAMAS files (ISO 14976, the format described in [16]) with experiment mode NORM and a regular energy
+axis, which is what the Thermo K-Alpha writes. Unspecified values are stored as 1e37 and are treated as missing. The
+file does not say what its experimental variables mean, so the tab lets you choose where the tilt and the azimuth come
+from; it defaults to the first experimental variable for the tilt, which is where the K-Alpha stores it. Binding
+energy is taken as the photon energy minus the kinetic energy.
 
 ## Spectrum simulation
 

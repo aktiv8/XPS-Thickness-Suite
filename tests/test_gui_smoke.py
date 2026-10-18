@@ -25,8 +25,12 @@ import thickogram as T  # noqa: E402
 
 try:
     import thickogram_tab as TT
+    import arxps_tab as AT
 except ImportError:
-    TT = None
+    TT = AT = None
+
+import synthetic as S  # noqa: E402
+import vamas as VM  # noqa: E402
 
 
 def _make_app(testcase):
@@ -38,12 +42,13 @@ def _make_app(testcase):
 
 @unittest.skipUnless(HAVE_DISPLAY and TT is not None, "needs a display and numpy + matplotlib")
 class ThickogramTabSmoke(unittest.TestCase):
-    def test_window_has_the_three_tabs_and_the_suite_title(self):
+    def test_window_has_the_four_tabs_and_the_suite_title(self):
         app = _make_app(self)
         self.assertEqual(app.title(), "XPS Thickness Suite")
         nb = app.nametowidget(app.calc_tab.winfo_parent())
         self.assertEqual([nb.tab(i, "text") for i in range(nb.index("end"))],
-                         ["Calculator & simulation", "Thickogram (different core levels)", "Method / References"])
+                         ["Calculator & simulation", "Thickogram (different core levels)", "ARXPS (tilt series)",
+                          "Method / References"])
 
     def test_example_reproduces_the_library_result(self):
         app = _make_app(self)
@@ -278,13 +283,134 @@ class HelpViewerSmoke(unittest.TestCase):
         self.assertEqual(len(view.text.image_names()), 2)       # only the two figures remain images
 
 
+@unittest.skipUnless(HAVE_DISPLAY and AT is not None, "needs a display and numpy + matplotlib")
+class ARXPSTabSmoke(unittest.TestCase):
+    """The ARXPS tab driven with synthetic VAMAS tilt series (see synthetic.py)."""
+
+    def _write(self, blocks):
+        import tempfile
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        path = os.path.join(d.name, "series.vms")
+        VM.write(path, blocks)
+        return path
+
+    def _states_tab(self, blocks):
+        app = _make_app(self)
+        tab = app.arxps
+        self.assertTrue(tab.load_file(self._write(blocks)))
+        tab.sub_preset.set("Si (metal/elemental)")
+        tab._apply_preset("sub")
+        tab.ov_preset.set("SiO2")
+        tab._apply_preset("ov")
+        return app, tab
+
+    def test_empty_tab_shows_a_prompt_and_no_result(self):
+        app = _make_app(self)
+        self.assertEqual(app.arxps.readout_var.get(), "-.-- nm")
+        self.assertEqual(app.arxps.results, {})
+
+    def test_presets_fill_lambda_and_rinf_like_the_calculator(self):
+        app, tab = self._states_tab(S.two_state_series())
+        self.assertAlmostEqual(float(tab.v["lam"].get()), 3.89)
+        self.assertAlmostEqual(float(tab.v["rinf"].get()), 0.5547, places=3)
+
+    def test_two_states_calculation_matches_the_library_and_fills_the_table(self):
+        import arxps as AR
+        app, tab = self._states_tab(S.two_state_series(d_nm=1.5))
+        tab.auto_windows()
+        self.assertTrue(tab.v["env_lo"].get() and tab.v["split"].get())
+        tab.v["max_angle"].set("80")
+        tab.calculate()
+        self.assertEqual(len(tab.results), 1)
+        res = tab.results[None]
+        self.assertAlmostEqual(res.d_nm, 1.5, delta=0.03)
+        self.assertEqual(tab.readout_var.get(), f"{res.d_nm:.2f} nm")
+        self.assertEqual(len(tab.table.get_children()), 6)
+        self.assertEqual(tab.badge.cget("text"), "The angles agree: x falls on a line through the origin")
+        self.assertEqual(len(tab.figs["fit"][0].axes), 1)
+        self.assertGreater(len(tab.figs["spectra"][0].axes[0].lines), 6)
+
+    def test_high_angles_are_excluded_and_say_so(self):
+        app, tab = self._states_tab(S.two_state_series())
+        tab.calculate()                               # windows are found automatically when blank
+        self.assertIn("75 deg", tab.badge.cget("text"))
+        self.assertEqual(sum(r.used for r in tab.results[None].rows), 5)
+
+    def test_two_peaks_mode(self):
+        app = _make_app(self)
+        tab = app.arxps
+        tab.load_file(self._write(S.two_peak_series(d_nm=1.5)))
+        tab.mode.set(AT.MODE_PEAKS)
+        tab._mode_changed()
+        tab.v["region_sub"].set("Si2p Scan")
+        tab.v["region_ov"].set("O1s Scan")
+        tab._region_changed()
+        for key, value in {"lam": "3.0", "so": "2.93", "ss": "0.82", "eo": "532", "es": "99.3"}.items():
+            tab.v[key].set(value)
+        tab.v["max_angle"].set("80")
+        tab.calculate()
+        self.assertAlmostEqual(tab.results[None].d_nm, 1.5, delta=0.02)
+        self.assertAlmostEqual(tab.results[None].b, (1486.68 - 532) / (1486.68 - 99.3), places=9)
+
+    def test_several_azimuths_give_a_mean_a_selector_and_a_polar_plot(self):
+        app, tab = self._states_tab(S.two_state_series(azimuths=(0.0, 90.0), d_by_azimuth={0.0: 1.2, 90.0: 1.8}))
+        self.assertEqual(tab.v["azim_src"].get(), "Experimental variable 2")
+        tab.v["max_angle"].set("80")
+        tab.calculate()
+        self.assertEqual(sorted(tab.results), [0.0, 90.0])
+        self.assertAlmostEqual(tab.summary[0], 1.5, delta=0.05)
+        self.assertEqual(tab.readout_var.get(), f"{tab.summary[0]:.2f} nm")
+        self.assertEqual(list(tab.view_cb.cget("values")), ["0", "90"])
+        self.assertTrue(tab.view_cb.winfo_manager())
+        self.assertEqual(tab.figs["azimuth"][0].axes[0].name, "polar")
+        tab.v["view_az"].set("90")
+        tab._view_changed()
+        self.assertEqual(tab.table.item(tab.table.get_children()[0], "values")[0], "90")
+
+    def test_a_single_azimuth_says_there_is_nothing_to_plot(self):
+        app, tab = self._states_tab(S.two_state_series())
+        tab.calculate()
+        texts = [t.get_text() for t in tab.figs["azimuth"][0].axes[0].texts]
+        self.assertTrue(any("single azimuth" in t for t in texts))
+
+    def test_errors_become_messages(self):
+        app = _make_app(self)
+        tab = app.arxps
+        with mock.patch.object(AT.messagebox, "showerror") as shown:
+            tab.calculate()                                   # nothing loaded
+            self.assertIn("Open a VAMAS file", shown.call_args[0][1])
+        with mock.patch.object(AT.messagebox, "showerror") as shown:
+            path = os.path.join(os.path.dirname(__file__), "test_arxps.py")       # not a VAMAS file
+            self.assertFalse(tab.load_file(path))
+            self.assertTrue(shown.called)
+        self.assertIsNone(tab.file)
+
+    def test_a_missing_overlayer_number_is_reported(self):
+        app, tab = self._states_tab(S.two_state_series())
+        tab.v["rinf"].set("")
+        with mock.patch.object(AT.messagebox, "showerror") as shown:
+            tab.calculate()
+        self.assertIn("R∞", shown.call_args[0][1])
+
+    def test_changing_the_region_clears_the_windows(self):
+        app, tab = self._states_tab(S.two_state_series())
+        tab.auto_windows()
+        tab._region_changed()
+        self.assertEqual(tab.v["env_lo"].get(), "")
+
+
 @unittest.skipUnless(HAVE_DISPLAY, "needs a display")
 class WithoutPlottingPackages(unittest.TestCase):
     def test_calculator_still_works_and_the_tab_shows_an_install_hint(self):
-        with mock.patch.object(A, "HAVE_THICKOGRAM", False), mock.patch.object(A, "HAVE_PLOT", False):
+        with mock.patch.object(A, "HAVE_THICKOGRAM", False), mock.patch.object(A, "HAVE_ARXPS", False), \
+                mock.patch.object(A, "HAVE_PLOT", False):
             app = _make_app(self)
             self.assertFalse(hasattr(app, "thickogram"))
+            self.assertFalse(hasattr(app, "arxps"))
             texts = [w.cget("text") for w in app.thick_tab.winfo_children() if w.winfo_class() == "TLabel"]
+            self.assertTrue(any("pip install numpy matplotlib" in t for t in texts))
+            texts = [w.cget("text") for w in app.arxps_tab.winfo_children() if w.winfo_class() == "TLabel"]
             self.assertTrue(any("pip install numpy matplotlib" in t for t in texts))
             s = app.substrate_row
             s.choice_var.set("Al (metal)")
