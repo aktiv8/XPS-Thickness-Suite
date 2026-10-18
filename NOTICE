@@ -12,6 +12,12 @@ Thickogram (thickogram.py, thickogram_tab.py, legacy/thickogram_v1_3.py)
     repository, and the aktiv8/Thickogram repository carries no licence file. The derived code is included here
     with attribution. If you are the author and have concerns, please contact the repository owner.
 
+Topofactors (topofactor.py, the sample-shape controls of the Thickogram tab)
+  - Method and data: A. G. Shard, J. Wang and S. J. Spencer, "XPS topofactors: determining overlayer thickness on
+    particles and fibres", Surf. Interface Anal. 41, 541-548 (2009), DOI 10.1002/sia.3044. The Topofactor definition,
+    the thin-film limits (2/pi, 0.50, 0.57), the constant averages (0.79, 0.67, 0.71), Eq. (6) and the shape
+    parameters of its Table 1 are taken from that paper; the implementation is original.
+
 Strohmeier calculator and presets
   - Equation: B. R. Strohmeier, Surf. Interface Anal. 15, 51-56 (1990); HarwellXPS Technical Note #1.
   - Al / Al2O3 presets: Strohmeier (1990). Cu oxide/hydroxide presets: M. C. Biesinger, Surf. Interface Anal. 49,

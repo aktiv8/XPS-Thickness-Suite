@@ -684,7 +684,7 @@ class App(tk.Tk):
         self.geometry(f"{width}x{height}+{x}+{y}")
         self.minsize(min(1100, width), min(680, height))
 
-        nb = ttk.Notebook(self)
+        self.nb = nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8, pady=8)
 
         self.calc_tab = ttk.Frame(nb)
@@ -1246,197 +1246,23 @@ class App(tk.Tk):
         self.thickogram.pack(fill="both", expand=True, padx=8)
 
     def _build_help_tab(self):
-        frame = ttk.Frame(self.help_tab)
-        frame.pack(fill="both", expand=True, padx=6, pady=6)
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
-        text = tk.Text(frame, wrap="word", font=("Segoe UI", 10), padx=14, pady=12, relief="flat", bg=CARD,
-                       highlightthickness=1, highlightbackground="#d1d5db")
-        scroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
-        text.configure(yscrollcommand=scroll.set)
-        text.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
-        text.insert("1.0", HELP_TEXT)
-        text.configure(state="disabled")
+        """The documentation tab. The rich viewer (docs/*.md with typeset equations) is built the first time the tab
+        is opened, which keeps start-up quick; until then the tab is empty."""
+        self._help_view = None
+        self.nb.bind("<<NotebookTabChanged>>", lambda e: self._ensure_help())
 
-
-HELP_TEXT = """XPS OVERLAYER THICKNESS CALCULATOR - METHOD NOTES
-
-Source method
---------------
-B. R. Strohmeier, Surface and Interface Analysis, 1990, 15, 51.
-HarwellXPS Technical Note #1, "Oxide Thickness Determination Using the
-Strohmeier Equation":
-https://subsite.harwellxps.uk/wp-content/uploads/2018/02/HarwellXPS_TechNote_01.pdf
-
-Model
------
-A uniform overlayer of oxide/hydroxide/nitride sits on top of a
-semi-infinite substrate (e.g. the parent metal). Curve-fitting the
-high-resolution core-level spectrum gives the percentage peak areas of the
-substrate component (I_sub, e.g. metallic Cu0) and of the overlayer
-component(s) (I_ov, e.g. Cu2+ in CuO). The method needs only ONE spectrum
-per sample and no depth profiling, but is only valid for thin films -
-approximately up to 3x the inelastic mean free path (IMFP) of the relevant
-photoelectrons in the overlayer.
-
-Single-component equation (Strohmeier, 1990):
-
-    d = lambda_ox * sin(theta) * ln[ (N_m * lambda_m * I_ox)
-                                       / (N_ox * lambda_ox * I_m) + 1 ]
-
-Mixed overlayer (e.g. oxide + hydroxide present together), per tech note:
-
-    d = lambda_ave * sin(theta) * ln[ (N_m * lambda_m * (I_oxide + I_hydroxide))
-                                        / (N_ave * lambda_ave * I_m) + 1 ]
-
-    lambda_ave and N_ave are the intensity-weighted averages of the
-    individual overlayer components' IMFP and volume density. This tool
-    computes those automatically from the ticked/active overlayer rows.
-
-Generalised form used in this tool (adds optional RSF terms):
-
-    d = lambda_ov * sin(theta) * ln[ (RSF_sub * N_sub * lambda_sub * I_ov)
-                                       / (RSF_ov * N_ov * lambda_ov * I_sub) + 1 ]
-
-    For the classic same-element case (e.g. Cu0 vs Cu2+, both from Cu 2p3/2)
-    the RSF is identical for substrate and overlayer and cancels - leave
-    both RSF fields at 1.0. Only change the RSF fields if you are combining
-    intensities measured from genuinely different core levels/elements
-    (e.g. normalising an N 1s overlayer signal against a Si 2p substrate
-    signal), in which case enter each region's standard relative
-    sensitivity factor (instrument- or library-specific, e.g. Scofield/
-    Wagner values as tabulated by your XPS software).
-
-Volume density N
------------------
-N = (atoms of the substrate element per formula unit) * density / molar mass
-
-e.g. for Cu2O: N = (2 x 6.00) / 143.09. This matches the tech note's
-worked calculation for the Cu/CuO/Cu2O/Cu(OH)2 system (only the
-ratio Nm/Nox enters the equation, so absolute units are not important as
-long as they are used consistently, which this tool does automatically).
-
-Take-off angle
---------------
-theta is measured from the SAMPLE SURFACE (grazing = small theta, normal
-emission = 90 degrees), matching the Strohmeier/tech-note convention.
-Some instruments/software quote the angle from the surface NORMAL instead
-- if so, use theta_this_tool = 90 - theta_your_software.
-
-On the pre-filled reference values
------------------------------------
-Several presets come straight from the original papers and are pinned by
-tests/test_regression.py:
-  - Al / Al2O3 (Al Ka and Mg Ka): Strohmeier, Surf. Interface Anal. 1990,
-    15, 51. IMFP 2.8 nm oxide / 2.6 nm metal (Al Ka) and 2.4 / 2.2 nm
-    (Mg Ka), Nm/Nox = 1.5. Also used in M. C. Biesinger's Al oxide/hydroxide
-    spreadsheet. The 3.40 g/cm3 Al2O3 density is back-calculated to give
-    Nm/Nox = 1.5 (Strohmeier quotes ~1.3-1.5 from gamma-Al2O3 densities).
-  - Cu / Cu2O / CuO / Cu(OH)2: Biesinger, Surf. Interface Anal. 2017, 49,
-    1325 (densities 8.96, 6.00, 6.31, 3.37 g/cm3; IMFPs 1.54, 1.77, 1.76,
-    2.19 nm). These IMFPs are for Cu LMM Auger electrons (KE ~918 eV), so
-    use the '(LMM)' presets with areas from the Cu LMM fit. Separate
-    '(2p3/2)' presets (IMFP 1.01 / 1.23 / 1.22 / 1.51 nm for Cu / Cu2O / CuO /
-    Cu(OH)2, KE ~554 eV with Al Ka) are COMPUTED here with TPP-2M, not
-    published values. Do not mix the two sets: thickness scales almost
-    linearly with the IMFPs, so the wrong set changes the answer by ~30%.
-  - W / WO3: Carlson & McGuire, J. Electron Spectrosc. 1972/73, 1, 161
-    (19.3 and 6.8 g/cm3, IMFP 1.28 and 2.63 nm, 45 deg take-off).
-
-Si, SiO2, Si3N4, Ti and TiO2 use densities and band gaps from the Thermo
-Avantage Densities.txt, with IMFPs COMPUTED here by TPP-2M (not published
-values). SiON is a rough placeholder.
-
-Also included: Mg/MgO, Ge/GeO2, Zn/ZnO (use the Zn LMM line), Zr/ZrO2, Hf/HfO2,
-Sn/SnO2, SiC (with the SiO2 overlayer), GaAs and GaP (Ga 3d, with Ga2O3) and
-CdTe (Te 3d5/2, with TeO2), InP (In 3d5/2, with In2O3) and PbS (S 2p, with
-PbSO4). Densities and band gaps come from the Avantage file
-where it has them, otherwise from standard handbook values (not from your files);
-IMFPs are COMPUTED with TPP-2M. Check Nm/Nox against the Pilling-Bedworth ratio
-if in doubt, and edit anything that doesn't match your film. All presets are
-ALL EDITABLE. In particular:
-  - IMFP is the most sensitive/uncertain input and depends on the exact
-    kinetic energy (i.e. your X-ray source) and the true film density.
-    For rigorous work, obtain IMFPs from the NIST Electron Inelastic-Mean-
-    Free-Path Database (SRD 82) or a TPP-2M calculator for your specific
-    photon energy and material, rather than relying on the defaults here.
-  - Film density can differ substantially from bulk/crystalline values
-    for thin, amorphous, native or anodic films (e.g. native Al2O3 vs.
-    sapphire; thermal SiO2 vs. quartz) - adjust accordingly.
-  - Binding energy fields are for peak identification/reference only and
-    do not enter the thickness calculation directly.
-
-Thickogram tab (overlayer and substrate from DIFFERENT core levels)
---------------------------------------------------------------------
-Use this when the overlayer and the substrate are different elements/peaks
-(e.g. a Fe 2p overlayer on Si 2p), where the Calculator tab's same-core-level
-equation does not apply. Method: Peter J. Cumpson, Surf. Interface Anal. 29,
-403-406 (2000). With x = t / (L cos(theta)):
-
-    A = Io / (Is * Ro) = 2 * exp((B^0.75 - 0.5) x) * sinh(x / 2)
-    Ro = So / Ss (ratio of the sensitivity factors),  B = KEo / KEs
-    KE = X-ray source energy - binding energy,  t = x * L * cos(theta)
-
-B^0.75 is Cumpson's energy dependence of the attenuation length. x is found
-numerically and drawn on the thickogram: the red line runs from A on the left
-scale to B, and its crossing with the green curve is the answer.
- - theta here is measured from the surface NORMAL (0 = normal emission), as in
-   Cumpson's paper. The Calculator tab uses theta from the SURFACE (90 = normal);
-   the tab shows the conversion and "Copy from Calculator" applies it.
- - L is the attenuation length of the overlayer's photoelectrons in the overlayer.
-   The presets supply an IMFP, which is ~10% longer than the attenuation length.
- - RSFs and peak areas are always typed in; densities do not appear, so use
-   RSFs (or effective values) consistent with how you measured the reference ratio.
- - The printed scales cover B = 0.4-3.0 and x = 0.1-6; outside that the answer is
-   still calculated, the plot just can't show it on the printed scales.
- - For equal kinetic energies (B = 1) it reduces exactly to x = ln(1 + A), i.e. the
-   Strohmeier equation of the Calculator tab.
-Credit: the nomogram code derives from the GlowScript program by Prof. Jong Wan Lee
-(Hallym University), converted to Python/Tk; the red-line endpoint was corrected.
-See the NOTICE file.
-
-Simulated spectrum pane (estimate)
------------------------------------
-Below the inputs, the "Simulated spectrum" pane draws what the calculated
-thickness would look like for the substrate and oxide core-level peaks
-(spin-orbit doublets, Shirley-type background) next to a to-scale layer
-diagram, so you can compare it by eye with your own data. Use "Load my
-spectrum..." (2-column text/CSV: binding energy, intensity) to overlay it; it
-is scaled to the height of the simulation. Use the thickness box/slider for
-what-if values, the BE shift for charge correction, and the FWHM boxes to
-match your resolution. Drag the divider above the pane to trade height
-between the inputs and the plot.
-
-It is an ESTIMATE, not a fit: splitting, branching ratio and FWHM are typical
-literature defaults, and intensities are relative (areas normalised to 100%).
-For simplicity the simulation does NOT draw shake-up/shake-off satellites
-(e.g. the Cu(II) satellites of CuO and Cu(OH)2 in Cu 2p3/2, which carry roughly
-35-39% of the Cu(II) area), plasmon/loss features, Auger lines or asymmetric
-metal tails. A note under the plot says so, and for Cu(II) the missing satellite
-region is shaded. Auger presets (Cu LMM, Zn LMM) are not simulated. The pane
-needs numpy and matplotlib (pip install numpy matplotlib); the calculator
-itself does not.
-
-Validity / limitations
-------------------------
-- Assumes a uniform, laterally-continuous overlayer of constant
-  composition (no depth-dependent stoichiometry).
-- Reliable up to roughly 3x the overlayer IMFP; beyond that the method
-  becomes insensitive to further thickness increases and should not be
-  trusted (the tool flags this automatically).
-- Assumes photoelectron energies for substrate and overlayer peaks are
-  similar enough that a single effective attenuation length is
-  reasonable per component (true for chemically-shifted peaks of the
-  same core level; use the RSF-generalised form with care otherwise).
-
-References
-----------
-[1] B. R. Strohmeier, Surf. Interface Anal., 1990, 15, 51.
-[2] M. C. Biesinger, Surf. Interface Anal. (in press), DOI: 10.1002/sia.6239.
-[3] M. C. Biesinger, B. P. Payne, L. W. M. Lau, A. Gerson, R. S. C. Smart,
-    Surf. Interface Anal., 2009, 41, 324.
-"""
+    def _ensure_help(self):
+        if self._help_view is not None or self.nb.select() != str(self.help_tab):
+            return
+        try:
+            import help_viewer
+            self._help_view = help_viewer.build_viewer(self.help_tab)
+            self._help_view.pack(fill="both", expand=True, padx=6, pady=6)
+        except Exception as e:                      # missing docs/ folder or a viewer problem: say where the docs are
+            self._help_view = ttk.Label(self.help_tab, justify="left", padding=20, text=(
+                "The documentation could not be shown here (" + str(e) + ").\n\nIt is in the docs folder of the "
+                "repository, and on GitHub:\nhttps://github.com/aktiv8/XPS-Thickness-Suite/tree/main/docs"))
+            self._help_view.pack(anchor="nw")
 
 
 if __name__ == "__main__":

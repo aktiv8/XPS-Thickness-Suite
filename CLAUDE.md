@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **XPS Thickness Suite** (repo `aktiv8/XPS-Thickness-Suite`, renamed from `XPS-Thickness-Calculator`; local folder `C:\Users\david\Documents\XPS-Thickness-Suite`): one Tkinter window with a tab per overlayer-thickness method.
 
 - **Calculator & simulation** (`app.py`; the calculation is Python standard library only): oxide/hydroxide/nitride thickness from peak areas of the **same core level** using the Strohmeier equation (B. R. Strohmeier, *Surf. Interface Anal.* 1990, 15, 51; HarwellXPS Tech Note #1: https://subsite.harwellxps.uk/wp-content/uploads/2018/02/HarwellXPS_TechNote_01.pdf), plus the simulated spectrum.
-- **Thickogram** (`thickogram.py` maths, `thickogram_tab.py` GUI): Cumpson's method for an overlayer and a substrate from **different core levels** (P. J. Cumpson, *Surf. Interface Anal.* 2000, 29, 403), with the classic nomogram embedded. Integrated from the user's separate `aktiv8/Thickogram` repo, which stays untouched; `legacy/thickogram_v1_3.py` is its unmodified script.
-- `gui_common.py` holds the shared palette, `setup_style()` and `Tooltip` so `app.py` and the tab modules don't import each other. `README.md` covers user-facing usage; `NOTICE` has the attribution.
+- **Thickogram** (`thickogram.py` maths, `thickogram_tab.py` GUI): Cumpson's method for an overlayer and a substrate from **different core levels** (P. J. Cumpson, *Surf. Interface Anal.* 2000, 29, 403), with the classic nomogram embedded. Integrated from the user's separate `aktiv8/Thickogram` repo, which stays untouched; `legacy/thickogram_v1_3.py` is its unmodified script. The tab can also apply a **Topofactor** (`topofactor.py`; A. G. Shard, J. Wang, S. J. Spencer, *Surf. Interface Anal.* 2009, 41, 541, DOI 10.1002/sia.3044) to correct for fibres and particles.
+- `gui_common.py` holds the shared palette, `setup_style()` and `Tooltip` so `app.py` and the tab modules don't import each other.
+- **Documentation** lives once, as Markdown + LaTeX in `docs/*.md` (rendered by GitHub and, with typeset equations, by `help_viewer.py` in the app's Method / References tab). `README.md` is only a landing page; `NOTICE` has the attribution. See "Documentation" below before editing any of it.
 
 The repo is **public** (the user chose to leave it public although the code derived from Prof. Jong Wan Lee's GlowScript program has no known licence — hence the NOTICE). Don't remove the attribution.
 
@@ -18,7 +19,10 @@ The repo is **public** (the user chose to leave it public although the code deri
 python app.py                                                  # launch the Tk GUI (blocks until closed)
 python -c "import py_compile; py_compile.compile('app.py', doraise=True)"   # syntax check without opening a window
 python -m unittest discover -s tests -v                        # run all tests (no display; numpy tests skip if numpy is missing)
-pip install numpy matplotlib                                   # optional: enables the "Simulated spectrum" pane and the Thickogram tab
+pip install numpy matplotlib                                   # optional: enables the "Simulated spectrum" pane, the Thickogram tab and typeset help
+python docs/make_presets.py                                    # regenerate docs/presets.md from the preset data (a test fails if it is stale)
+python docs/make_figures.py                                    # regenerate docs/images/topofactor-curves.png from the code
+python docs/make_screenshots.py                                # regenerate the docs screenshots (Windows, visible display; don't touch the mouse)
 python -m unittest tests.test_regression.BiesingerAlSpreadsheet   # a single test class
 ```
 
@@ -67,6 +71,26 @@ Optional (numpy + matplotlib; `app.py` guards the import and sets `HAVE_PLOT`, a
 - Presets only prefill binding energy (+ λ for the overlayer); presets carry no real RSFs, so So/Ss and the peak areas are always typed. `Copy from Calculator` does not copy areas (the Calculator's areas are same-core-level components, a different meaning).
 - The matplotlib lessons in "GUI layout" above (bind `<Configure>` with `add="+"`, toolbar width, redraw on resize) apply here too; the nomogram has no ticks so fractional figure margins are fine.
 - `tests/test_gui_smoke.py` builds the real window and drives this tab; it skips itself when there is no display.
+
+### Topofactors (`topofactor.py`, sample-shape controls in the tab)
+
+`TF = T/t`: the planar Thickogram thickness `t` times the Topofactor gives the true conformal thickness `T` of a coating on a fibre or particle (paper: Shard, Wang & Spencer 2009, read in full from the user's PDF). Pure Python (math only); `apply_topofactor(result, shape, mode)` consumes a `ThickogramResult`. The tab keeps the planar solution and re-applies the factor when the shape/mode changes (`_present()`), so changing the shape never re-solves.
+
+- Regimes (`topofactor()`): `t/L < 0.1` thin-film limit (cylinder 2/π, sphere 0.50, shadowed sphere 0.57); `0.1 ≤ t/L ≤ 3` Eq. (6) `TF = c0 + (c1 + c2 ln B) t^k + c3 exp(−c4 B)` with the paper's Table 1; above 3 the value at 3 is held with a warning. `mode="constant"` uses the paper's averages 0.79 / 0.67 / 0.71. The factor jumps slightly at 0.1 where the limit meets Eq. 6 (documented, tested).
+- **Units trap:** the paper's `B` is `(Eo/Es)^0.75`, but `thickogram.py`'s `b` is the plain kinetic-energy ratio (it applies `^0.75` inside). Always go through `topofactor.b_paper(b)`. A test reproduces the paper's own experimental values (1.19 for C 1s:O 1s, 0.90 for C 1s:Si 2p). `t` in Eq. (6) is `t_nm / L`, not nm.
+- The paper's Table 1 caption says "Eqn (7)" but the parameters are for Eqn (6); its sphere value 0.67 is quoted at t = 1.5 in the text but at T = 1.5 in Table 2 (Eq. 6 gives 0.66 at t = 1.5). Both are noted in `docs/methods.md`.
+- Conditions the tab warns about: θ ≠ 0 (mean normal must face the analyser) and B outside 0.7–1.4 (Eq. 6 is best near 1). It always notes that Topofactors do **not** apply to nanoparticles/nanofibres — the paper's separate nanoscale model (its Eqs. 7–9) is deliberately **not** implemented: its exponents are scrambled in the PDF text layer and the page could not be rendered here, so it can't be transcribed reliably. Eq. 10 of the paper defines `Ro = Xo So / (Xs Ss)` (atomic fractions), which the docs and tab hints now say; the tab still takes So/Ss as typed values.
+- Topofactors are applied on the Thickogram tab only (user decision); the Calculator tab's Strohmeier result is a planar-film result.
+
+## Documentation (`docs/`, `help_viewer.py`)
+
+One source, two renderers. `docs/user-guide.md`, `methods.md`, `presets.md`, `references.md` are GitHub-flavoured Markdown with LaTeX (```` ```math ```` blocks and inline `$...$`); GitHub renders them natively, and `help_viewer.py` renders the same files in the app's Method / References tab (headings, lists, tables, images, links, equations typeset by matplotlib mathtext; Unicode text if matplotlib is missing; a pointer to GitHub if `docs/` is missing). The tab is built on first use (`App._ensure_help`).
+
+- **Stay inside the supported subset** or `tests/test_docs.py` fails (`parse_markdown(strict=True)`): `#`–`###` headings, paragraphs, `-`/`1.` lists (two levels), `>` quotes, code fences, ```` ```math ````, pipe tables with **plain-text cells (no `$` inside tables)**, `![alt](path)` images on their own line, `---` rules after a blank line; inline `**bold**`, `*italic*`, `` `code` ``, links, `$math$`. No raw HTML, no `_emphasis_`, no strikethrough, no headings deeper than `###`.
+- **Equations must be understood by both GitHub (KaTeX) and mathtext.** Avoid `\tfrac`, `\begin{aligned}`, `\le`/`\ge` (use `\leq`/`\geq`); use `\mathrm{}` for upright text; put a thin space `\,` between a letter and a function name (`L\,\cos\theta`). The tests parse every expression with mathtext. mathtext is single-line, so multi-line math is whitespace-normalised before rendering.
+- `docs/presets.md` is **generated** by `docs/make_presets.py` from `app.py`'s preset data (provenance is inferred from each `Compound.note`; keep the words "COMPUTED", "Avantage", "Strohmeier", "Carlson", a leading "Biesinger", or "your message" in notes accordingly). A test fails if it is stale. Figures and screenshots in `docs/images/` are generated by `make_figures.py` / `make_screenshots.py`; screenshots are cropped to the exact window with the DWM frame bounds so nothing from the desktop behind it leaks into a public repo.
+- **Numbers quoted in the docs are verified by tests** (`ClaimsMatchTheCode`: the worked examples, Table 1, the validity limits). If you change the maths or the presets, update the docs text the test points at. Citation numbers `[n]` must exist in `references.md`; DOIs there were verified from the user's PDFs or a bibliographic lookup — don't add unverified ones (Carlson & McGuire has none for that reason).
+- Link anchors follow GitHub's slug rules (`help_viewer.slugify`); a test checks every internal link and anchor.
 
 ## Git
 

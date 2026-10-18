@@ -15,7 +15,11 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 import thickogram as T
+import topofactor as TFAC
 from gui_common import ACCENT, BADGE, CARD, MUTED, Tooltip, _to_float
+
+SHORT_SHAPE = {"cylinder": "cylinder", "sphere": "sphere", "sphere_shadowed": "shadowed sphere"}
+SHORT_MODE = {"eq6": "Eq. (6)", "constant": "Constant average"}       # the compact layout has less room
 
 # key, label, hint (the hints are the original script's)
 FIELDS = [
@@ -23,8 +27,10 @@ FIELDS = [
     ("Es", "Substrate binding energy Es (eV)", "e.g. 100 for Si 2p"),
     ("Io", "Overlayer peak area Io", "Peak area as measured in your software for the overlayer"),
     ("Is", "Substrate peak area Is", "Peak area as measured in your software for the substrate"),
-    ("So", "Overlayer RSF So", "Sensitivity factor of the overlayer peak"),
-    ("Ss", "Substrate RSF Ss", "Sensitivity factor of the substrate peak"),
+    ("So", "Overlayer RSF So", "Sensitivity factor of the overlayer peak (optionally multiplied by the atomic fraction "
+                               "of the element, as in Eq. 10 of Shard et al. 2009)"),
+    ("Ss", "Substrate RSF Ss", "Sensitivity factor of the substrate peak (optionally multiplied by the atomic "
+                               "fraction of the element, as in Eq. 10 of Shard et al. 2009)"),
     ("Lambda", "Lambda L (nm)", "Attenuation length of the overlayer's photoelectrons in the overlayer"),
     ("Theta", "Theta from the surface NORMAL (deg)", "0 = normal emission (Cumpson's convention)"),
     ("Esource", "X-ray source energy (eV)", "e.g. 1486.6 (Al Ka) or 1253.6 (Mg Ka)"),
@@ -42,8 +48,12 @@ class ThickogramTab(ttk.Frame):
         self.vars = {key: tk.StringVar() for key, _, _ in FIELDS}
         self.vars["Esource"].set("1486.6")
         self.vars["Theta"].set("0")
-        self.result = None
+        self.result = None          # planar Thickogram result
+        self.corrected = None       # topofactor.CorrectedResult, or None for a flat sample
         self.entries = {}
+        self.shape_var = tk.StringVar(value=TFAC.SHAPES["flat"].label)
+        self.mode_var = tk.StringVar(value=self._mode_label("eq6"))
+        self.shape_hint = tk.StringVar()
 
         self.columnconfigure(0, weight=0)
         self.columnconfigure(1, weight=1)
@@ -68,9 +78,15 @@ class ThickogramTab(ttk.Frame):
         for col, (text, var, choices, kind) in enumerate((
                 ("Overlayer preset:", self.ov_preset, [k for k in self.overlayers if k != "None"], "ov"),
                 ("Substrate preset:", self.sub_preset, list(self.substrates), "sub"))):
-            ttk.Label(presets, text=text, style="Card.TLabel").grid(row=col, column=0, sticky="w", pady=1)
-            combo = ttk.Combobox(presets, textvariable=var, values=choices, width=24, state="readonly")
-            combo.grid(row=col, column=1, padx=6, pady=1, sticky="w")
+            if self.compact:     # both presets on one row to save height on laptops
+                ttk.Label(presets, text=text.replace(" preset", ""), style="Card.TLabel").grid(
+                    row=0, column=2 * col, sticky="w", pady=1)
+                combo = ttk.Combobox(presets, textvariable=var, values=choices, width=14, state="readonly")
+                combo.grid(row=0, column=2 * col + 1, padx=(4, 10), pady=1, sticky="w")
+            else:
+                ttk.Label(presets, text=text, style="Card.TLabel").grid(row=col, column=0, sticky="w", pady=1)
+                combo = ttk.Combobox(presets, textvariable=var, values=choices, width=24, state="readonly")
+                combo.grid(row=col, column=1, padx=6, pady=1, sticky="w")
             combo.bind("<<ComboboxSelected>>", lambda e, k=kind: self._apply_preset(k))
             Tooltip(combo, "Optional: fills the binding energy (and, for the overlayer, lambda) from the "
                            "Calculator's reference table. RSFs and peak areas are always typed in.")
@@ -98,6 +114,36 @@ class ThickogramTab(ttk.Frame):
                 ttk.Label(extra, text=hint, style="CardMuted.TLabel", wraplength=250, justify="left").pack(side="left")
             row += 1
 
+        # --- sample morphology (Topofactor, Shard, Wang & Spencer 2009) ---------------------------------------
+        if not self.compact:
+            ttk.Separator(card, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="ew", pady=(6, 4))
+            row += 1
+        morph = ttk.Frame(card, style="Card.TFrame")
+        morph.grid(row=row, column=0, columnspan=3, sticky="ew")
+        morph.columnconfigure(1, weight=1)
+        ttk.Label(morph, text="Sample shape:", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=1)
+        shape_combo = ttk.Combobox(morph, textvariable=self.shape_var, state="readonly", width=1,
+                                   values=[s.label for s in TFAC.SHAPES.values()])
+        shape_combo.grid(row=0, column=1, sticky="ew", padx=(6, 0), pady=1)
+        shape_combo.bind("<<ComboboxSelected>>", lambda e: self._morphology_changed())
+        Tooltip(shape_combo, "Correct the planar (flat-sample) thickness for a fibre or particle using a Topofactor "
+                             "(Shard, Wang & Spencer, Surf. Interface Anal. 2009). Analyse with the sample's mean "
+                             "normal facing the analyser (theta = 0).")
+        ttk.Label(morph, text="Topofactor:", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=1)
+        mode_combo = ttk.Combobox(morph, textvariable=self.mode_var, state="readonly", width=1,
+                                  values=[self._mode_label(m) for m in TFAC.MODES])
+        mode_combo.grid(row=1, column=1, sticky="ew", padx=(6, 0), pady=1)
+        mode_combo.bind("<<ComboboxSelected>>", lambda e: self._morphology_changed())
+        Tooltip(mode_combo, "Eq. (6) of the paper depends on the thickness and on B (accurate to ~1% against its "
+                            "calculations); the constant average values (0.79 cylinder, 0.67 sphere, 0.71 shadowed "
+                            "sphere) are within ~10% for typical samples.")
+        row += 1
+        if not self.compact:
+            ttk.Label(card, textvariable=self.shape_hint, style="CardMuted.TLabel", wraplength=560,
+                      justify="left").grid(row=row, column=0, columnspan=3, sticky="w", pady=(2, 0))
+            row += 1
+        self._update_shape_hint()
+
         buttons = ttk.Frame(card, style="Card.TFrame")
         buttons.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         example_btn = ttk.Button(buttons, text="Load example", command=self.load_example)
@@ -110,6 +156,37 @@ class ThickogramTab(ttk.Frame):
         Tooltip(copy_btn, "Take the take-off angle (converted to the surface-normal convention), the binding "
                           "energies and lambda from the Calculator tab. Peak areas and RSFs are not copied.")
         return card
+
+    # --- morphology helpers ------------------------------------------------------------------------
+    def _mode_label(self, key):
+        return SHORT_MODE[key] if self.compact else TFAC.MODE_LABELS[key]
+
+    def _shape_key(self):
+        for key, shape in TFAC.SHAPES.items():
+            if shape.label == self.shape_var.get():
+                return key
+        return "flat"
+
+    def _mode_key(self):
+        for key in TFAC.MODES:
+            if self._mode_label(key) == self.mode_var.get():
+                return key
+        return "eq6"
+
+    def _update_shape_hint(self):
+        key = self._shape_key()
+        shape = TFAC.SHAPES[key]
+        if key == "flat":
+            self.shape_hint.set("Choose a fibre or particle to correct for its curvature (Topofactor). "
+                                + TFAC.NANOSCALE_NOTE)
+        else:
+            self.shape_hint.set(f"{shape.hint} Analyse with the sample's mean normal facing the analyser (theta = 0). "
+                                + TFAC.NANOSCALE_NOTE)
+
+    def _morphology_changed(self):
+        self._update_shape_hint()
+        if self.result is not None:
+            self._present()
 
     def _update_theta_note(self):
         th = _to_float(self.vars["Theta"].get())
@@ -147,6 +224,9 @@ class ThickogramTab(ttk.Frame):
         self.vars["Theta"].set("0")
         self.ov_preset.set("")
         self.sub_preset.set("")
+        self.shape_var.set(TFAC.SHAPES["flat"].label)
+        self.mode_var.set(self._mode_label("eq6"))
+        self._update_shape_hint()
 
     def copy_from_calculator(self):
         app, copied = self.app, []
@@ -177,7 +257,8 @@ class ThickogramTab(ttk.Frame):
 
     # --- results -------------------------------------------------------------------------------
     def _build_results(self, parent):
-        card = ttk.LabelFrame(parent, text="  Calculation  ", style="Card.TLabelframe", padding=10)
+        card = ttk.LabelFrame(parent, text="  Calculation  ", style="Card.TLabelframe",
+                              padding=(10, 2, 10, 4) if self.compact else 10)
         card.columnconfigure(0, weight=1)
         card.rowconfigure(3, weight=1)
         self.calc_btn = ttk.Button(card, text="Calculate & plot", style="Primary.TButton", command=self.calculate)
@@ -189,10 +270,12 @@ class ThickogramTab(ttk.Frame):
         self.readout_var = tk.StringVar(value="-.-- nm")
         self.readout_sub_var = tk.StringVar(value="Thickness will appear here")
         self.readout_lbl = tk.Label(readout, textvariable=self.readout_var, bg=CARD, fg="#b8bec7", anchor="w",
-                                    font=("Segoe UI", 24 if self.compact else 30, "bold"))
+                                    font=("Segoe UI", 20 if self.compact else 30, "bold"))
         self.readout_lbl.pack(anchor="w")
-        tk.Label(readout, textvariable=self.readout_sub_var, bg=CARD, fg=MUTED, anchor="w",
-                 font=("Segoe UI", 9)).pack(anchor="w")
+        self.readout_sub = tk.Label(readout, textvariable=self.readout_sub_var, bg=CARD, fg=MUTED, anchor="w",
+                                    font=("Segoe UI", 9), wraplength=340, justify="left")
+        self.readout_sub.pack(anchor="w")
+        self.readout_tip = Tooltip(self.readout_sub, "")          # the full details, shown on hover (see _present)
 
         self.badge = tk.Label(card, text="", font=("Segoe UI", 9, "bold"), padx=8, pady=4, anchor="w", justify="left",
                               wraplength=330)
@@ -210,6 +293,8 @@ class ThickogramTab(ttk.Frame):
         self.details.configure(yscrollcommand=scroll.set)
         self.details.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
+        if self.compact:     # short screens: the readout + badge carry the result, the details are on hover
+            frame.grid_remove()
         return card
 
     def _set_badge(self, kind, text):
@@ -231,17 +316,43 @@ class ThickogramTab(ttk.Frame):
             messagebox.showerror("Input error", str(e))
             return
         self.result = res
-        self.readout_var.set(f"{res.t_nm:.2f} nm")
-        self.readout_lbl.configure(fg=ACCENT)
-        self.readout_sub_var.set(f"{res.t_nm * 10:.1f} Å     (x = t/(L cosθ) = {res.x:.3f})")
-        if res.warnings:
-            self._set_badge("warn", " ".join(res.warnings))
+        self._present()
+
+    def _present(self):
+        """Show the planar result, or the Topofactor-corrected one when a curved shape is selected."""
+        res = self.result
+        key, mode = self._shape_key(), self._mode_key()
+        corr = TFAC.apply_topofactor(res, key, mode) if key != "flat" else None
+        self.corrected = corr
+        warnings = list(res.warnings) + (corr.warnings if corr else [])
+
+        if corr is None:
+            value_nm = res.t_nm
+            self.readout_sub_var.set(f"{res.t_nm * 10:.1f} Å     (x = t/(L cosθ) = {res.x:.3f})")
+            ok_text = "Within the printed nomogram scales"
+            head = [f"==> THICKNESS t = {res.t_nm:.3f} nm  ({res.t_nm * 10:.2f} Angstrom)"]
         else:
-            self._set_badge("ok", "Within the printed nomogram scales")
-        lines = [
-            f"==> THICKNESS t = {res.t_nm:.3f} nm  ({res.t_nm * 10:.2f} Angstrom)",
+            value_nm = corr.t_nm
+            if self.compact:
+                self.readout_sub_var.set(f"{corr.t_nm * 10:.1f} Å = {corr.tf:.3f} × planar {res.t_nm:.2f} nm")
+            else:
+                self.readout_sub_var.set(f"{corr.t_nm * 10:.1f} Å  corrected for a {SHORT_SHAPE[key]}: Topofactor "
+                                         f"{corr.tf:.3f} × planar t = {res.t_nm:.2f} nm")
+            ok_text = f"Topofactor applied ({SHORT_SHAPE[key]}, {corr.regime})"
+            head = [f"==> CORRECTED THICKNESS T = {corr.t_nm:.3f} nm  ({corr.t_nm * 10:.2f} Angstrom)",
+                    f"    = Topofactor {corr.tf:.4f} x planar (Thickogram) t = {res.t_nm:.3f} nm",
+                    f"    shape: {TFAC.SHAPES[key].label}; {TFAC.MODE_LABELS[mode]}; regime: {corr.regime}",
+                    f"    t/L = {corr.t_over_l:.3f}, B (paper) = (KEo/KEs)^0.75 = {corr.b_paper:.3f}"]
+        self.readout_var.set(f"{value_nm:.2f} nm")
+        self.readout_lbl.configure(fg=ACCENT)
+        if warnings:
+            self._set_badge("warn", " ".join(warnings))
+        else:
+            self._set_badge("ok", ok_text)
+
+        lines = head + [
             "",
-            f"x = {res.x:.5f}   (t = x * L * cos(theta) = {res.x:.5f} * {res.lam_nm:g} nm * "
+            f"Planar Thickogram: x = {res.x:.5f}   (t = x * L * cos(theta) = {res.x:.5f} * {res.lam_nm:g} nm * "
             f"cos({res.theta_normal_deg:g} deg))",
             f"A = Io/(Is*Ro) = {res.a:.5g}   with Ro = So/Ss = {res.ro:.5g}",
             f"B = KEo/KEs    = {res.b:.5g}   (KEo = {res.ke_o:.1f} eV, KEs = {res.ke_s:.1f} eV)",
@@ -249,10 +360,14 @@ class ThickogramTab(ttk.Frame):
             "On the nomogram the red line runs from A on the left scale to B; where it crosses the green curve "
             "is the answer (X = 2x).",
         ]
+        if corr is not None:
+            lines += [""] + ["Note: " + n for n in corr.notes]
+        text = "\n".join(lines)
         self.details.configure(state="normal")
         self.details.delete("1.0", "end")
-        self.details.insert("1.0", "\n".join(lines))
+        self.details.insert("1.0", text)
         self.details.configure(state="disabled")
+        self.readout_tip.text = text
         self._draw()
 
     # --- plot -----------------------------------------------------------------------------------
@@ -274,6 +389,11 @@ class ThickogramTab(ttk.Frame):
     def _draw(self):
         self.fig.clear()
         ax = self.fig.add_subplot(111)
-        T.draw_nomogram(ax, self.result)
+        annotation = None
+        if self.corrected is not None:
+            c = self.corrected
+            annotation = (f"planar t = {c.planar_t_nm:.2f} nm\nTopofactor {c.tf:.3f} "
+                          f"({SHORT_SHAPE[c.shape]}, {c.regime})\nT = {c.t_nm:.2f} nm")
+        T.draw_nomogram(ax, self.result, annotation=annotation)
         self.fig.subplots_adjust(left=0.03, right=0.98, top=0.94, bottom=0.07)
         self.canvas.draw_idle()

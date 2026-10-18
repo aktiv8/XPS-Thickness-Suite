@@ -1,0 +1,297 @@
+# Methods
+
+This page gives the equations behind each tab, the assumptions they rest on, and where they come from. Numbers in
+square brackets, such as [3], refer to the [reference list](references.md#references).
+
+Contents: [Overview](#overview), [Strohmeier equation](#strohmeier-equation-calculator-tab),
+[Thickogram](#thickogram-thickogram-tab), [Topofactors](#topofactors-fibres-and-particles),
+[Spectrum simulation](#spectrum-simulation), [IMFPs from TPP-2M](#imfps-from-tpp-2m).
+
+## Overview
+
+All three methods assume a **uniform overlayer of constant thickness on a semi-infinite substrate**, with the
+overlayer and substrate signals separable by peak fitting. They differ in which signals are compared.
+
+| Method | Signals compared | Needs | Valid for |
+|---|---|---|---|
+| Strohmeier (Calculator tab) | Two chemical states of the same core level, for example metallic Al and Al oxide in Al 2p | Densities, IMFPs | Flat samples, thickness up to about 3 IMFPs |
+| Thickogram (Thickogram tab) | Two different peaks, for example Fe 2p overlayer and Si 2p substrate | RSFs, kinetic energies, attenuation length | Flat samples |
+| Topofactor (Thickogram tab) | Correction applied to the Thickogram result | Sample shape | Fibres and particles much larger than the attenuation length |
+
+## Strohmeier equation (Calculator tab)
+
+For an oxide (or hydroxide, or nitride) on its own metal, the metal and oxide components of one core level are
+measured in a single spectrum. With $I_m$ and $I_{ox}$ their fitted peak areas, the thickness $d$ follows from [1]:
+
+```math
+d = \lambda_{ox}\,\sin\theta\;\ln\left[\frac{N_m\,\lambda_m\,I_{ox}}{N_{ox}\,\lambda_{ox}\,I_m}+1\right]
+```
+
+Here $\lambda_m$ and $\lambda_{ox}$ are the inelastic mean free paths (IMFPs) of the photoelectrons in the metal and
+in the oxide, $N_m$ and $N_{ox}$ are the volume densities of the *metal atoms* in each phase, and $\theta$ is the
+take-off angle measured **from the sample surface** (90 degrees is normal emission). The equation is the solved
+form of the intensity ratio for a uniform overlayer:
+
+```math
+\frac{I_m}{I_{ox}} = \frac{N_m\,\lambda_m}{N_{ox}\,\lambda_{ox}}\;\frac{\exp\left[-d/(\lambda_{ox}\sin\theta)\right]}{1-\exp\left[-d/(\lambda_{ox}\sin\theta)\right]}
+```
+
+### Volume density
+
+The volume density of metal atoms in a compound is
+
+```math
+N = \frac{n\,\rho}{M}
+```
+
+with $\rho$ the density, $M$ the molar mass and $n$ the number of metal atoms per formula unit (2 for Cu2O and
+Al2O3, 3 for Si3N4). Only the ratio $N_m/N_{ox}$ enters the equation, so the units cancel.
+
+### Mixed overlayers
+
+When several overlayer components are present, for example oxide and hydroxide, their areas are summed and the
+overlayer density and IMFP are replaced by intensity-weighted averages [2]:
+
+```math
+N_{ave}=\frac{\sum_i N_i I_i}{\sum_i I_i},\qquad
+\lambda_{ave}=\frac{\sum_i \lambda_i I_i}{\sum_i I_i}
+```
+
+```math
+d = \lambda_{ave}\,\sin\theta\;\ln\left[\frac{N_m\,\lambda_m\,\sum_i I_i}{N_{ave}\,\lambda_{ave}\,I_m}+1\right]
+```
+
+### Sensitivity factors
+
+The Calculator also accepts a relative sensitivity factor (RSF) for the substrate and each overlayer row. For the
+usual same-core-level case the RSFs are identical and cancel, so they default to 1. If you combine intensities
+from different core levels, the general form is
+
+```math
+d = \lambda_{ov}\,\sin\theta\;\ln\left[\frac{R_{sub}\,N_{sub}\,\lambda_{sub}\,I_{ov}}{R_{ov}\,N_{ov}\,\lambda_{ov}\,I_{sub}}+1\right]
+```
+
+For different peaks the [Thickogram](#thickogram-thickogram-tab) is the better-founded method.
+
+### Validity
+
+- The method assumes a uniform, continuous overlayer of constant composition.
+- It is reliable up to roughly three IMFPs of the overlayer, $d \lesssim 3\lambda$, which is also about the
+  sampling depth of XPS. Beyond that the metal signal vanishes into the noise. The app flags results above this
+  limit.
+- Elastic scattering is neglected, and the IMFP is used in place of the (slightly shorter) attenuation length.
+- Strohmeier's own estimate of the accuracy is 10 to 20 percent in absolute terms, with a precision of about
+  2 angstrom for repeated measurements [1].
+
+## Thickogram (Thickogram tab)
+
+Cumpson's Thickogram [3] gives the thickness of an overlayer from one peak of the overlayer and one peak of the
+substrate, which need not be the same core level or even the same element. It also assumes a flat sample.
+
+Let $x = t/(L\,\cos\theta)$ be the thickness in units of the overlayer attenuation length $L$ along the emission
+direction; here $\theta$ is measured **from the surface normal**, so $\theta = 0$ is normal emission. The ratio of
+the normalised signals is
+
+```math
+\frac{I_o/I_o^{\infty}}{I_s/I_s^{\infty}} = \frac{1-e^{-x}}{e^{-B x}}
+```
+
+where $I_o^{\infty}$ and $I_s^{\infty}$ are the intensities from infinitely thick samples of pure overlayer and pure
+substrate. Substrate electrons are attenuated in the overlayer with a length $L/B$, and Cumpson takes the energy
+dependence of the attenuation length as
+
+```math
+B = \left(\frac{E_o}{E_s}\right)^{0.75}
+```
+
+where $E_o$ and $E_s$ are the kinetic energies of the overlayer and substrate photoelectrons, each equal to the
+X-ray energy minus the binding energy. Defining the measured ratio
+
+```math
+A = \frac{I_o}{I_s\,R_o},\qquad R_o = \frac{I_o^{\infty}}{I_s^{\infty}} = \frac{X_o S_o}{X_s S_s}
+```
+
+where $S$ is the sensitivity factor of the peak and $X$ the atomic fraction of the element in the pure material
+(Eq. 10 of [4]), the equation becomes
+
+```math
+A = (1-e^{-x})\,e^{B x} = 2\,\exp\left[\left(B-\frac{1}{2}\right)x\right]\sinh\frac{x}{2}
+```
+
+and the thickness is
+
+```math
+t = x\,L\,\cos\theta
+```
+
+The equation has exactly one root $x$ for any positive $A$ and $B$, found numerically. The thickogram nomogram on
+the tab is the graphical solution: draw a line from $A$ on the left scale to $B$ on the right-hand scales, and
+read the answer where it crosses the green curve.
+
+### Practical notes
+
+- The tab asks for $S_o$ and $S_s$ as typed values, so you can enter the sensitivity factors already multiplied by
+  the atomic fractions $X_o$ and $X_s$ to follow Eq. 10 of [4] exactly.
+- For equal kinetic energies $B = 1$ and the equation reduces to $x = \ln(1+A)$. This is exactly the Strohmeier
+  equation with $N_m = N_{ox}$ and $\lambda_m = \lambda_{ox}$, and the test suite checks it.
+- The nomogram scales cover $0.4 \leq E_o/E_s \leq 3$ and $0.1 \leq x \leq 6$. Outside that range the thickness is
+  still calculated but the red line leaves the printed scales.
+- **Angle conventions differ between the tabs.** The Thickogram uses $\theta$ from the surface normal and the
+  Calculator uses $\theta$ from the surface, so that $\theta_{surface} = 90^{\circ} - \theta_{normal}$. The
+  Thickogram tab shows the conversion and its Copy from Calculator button applies it.
+- The red construction line in the original Thickogram script ended at the thickness position instead of on the
+  $B$ scale. The suite corrects this, so the line now meets the green curve exactly at the answer.
+
+![The Thickogram tab with a cylinder Topofactor applied](images/thickogram.png)
+
+## Topofactors: fibres and particles
+
+The Thickogram treats the sample as flat. For a fibre or a particle analysed with its mean surface normal pointing
+at the analyser, the planar equation overestimates the overlayer thickness, because much of the surface is steeply
+inclined and its overlayer is viewed along a longer path. Shard, Wang and Spencer [4] introduced the **Topofactor**,
+the ratio of the true conformal thickness $T$ to the apparent planar thickness $t$ given by the Thickogram:
+
+```math
+\mathrm{TF} = \frac{T}{t}
+```
+
+so the corrected thickness is $T = \mathrm{TF}\cdot t$. Analysis is done at $\theta = 0$, the planar thickness is
+calculated from the Thickogram, and the Topofactor is applied to the result.
+
+### Where the Topofactor comes from
+
+For a surface of known shape, the local thickness along the emission direction is $T/\cos\alpha$, where $\alpha$ is
+the local take-off angle, and the signals are summed over the analysed area. The overlayer to substrate ratio is
+then (Eq. 2 of [4])
+
+```math
+\frac{I_o/I_o^{\infty}}{I_s/I_s^{\infty}} = \frac{\int\left[1-\exp\left(-T/\cos\alpha\right)\right]dA}{\int\exp\left(-B\,T/\cos\alpha\right)dA}
+```
+
+Equating this to the planar Thickogram ratio gives $t$ for a given $T$, and hence $\mathrm{TF} = T/t$. For an
+infinitesimally thin overlayer this reduces to $\mathrm{TF} = 1/\langle\sec\alpha\rangle$, which equals the ratio of the
+projected to the true analysed area:
+
+```math
+\mathrm{TF}_{t\to 0} = \frac{1}{\langle\sec\alpha\rangle} = \frac{A_{proj}}{A_{true}}
+```
+
+This gives $2/\pi \approx 0.64$ for a cylinder (fibre axis perpendicular to the analyser), $0.50$ for a sphere whose
+whole surface is illuminated, and $0.57 \pm 0.01$ for a sphere with X-ray shadowing at a source-analyser angle of
+45 to 65 degrees. For thicker overlayers the numerical Topofactor rises with thickness.
+
+### Equation 6 of the paper
+
+For $0.1 < t < 3$, with $t$ the planar thickness in units of the attenuation length $L$, the paper's numerical results
+are reproduced to about 1 percent by
+
+```math
+\mathrm{TF} \approx c_0 + \left(c_1 + c_2\ln B\right)t^{k} + c_3\,e^{-c_4 B}
+```
+
+with $B = (E_o/E_s)^{0.75}$ as above, and the shape parameters of Table 1 of [4]:
+
+| Shape | c0 | c1 | c2 | c3 | c4 | k | Thin limit | Constant |
+|---|---|---|---|---|---|---|---|---|
+| Cylinder (fibre) | 0.46 | 0.25 | 0.09 | 0.16 | 1.1 | 0.22 | 0.64 | 0.79 |
+| Sphere, X-rays reach all of it | 0.40 | 0.20 | 0.09 | 0.14 | 1.5 | 0.33 | 0.50 | 0.67 |
+| Sphere, X-ray shadowed | 0.46 | 0.19 | 0.08 | 0.13 | 1.4 | 0.30 | 0.57 | 0.71 |
+
+The last column is the single average value the paper recommends when a quick answer within about 10 percent will
+do (0.79 for cylinders, 0.67 for spheres, calculated at $t = 1.5$ and $B = 1$). The tab offers both: **Eq. (6)**, which
+follows the thickness and $B$, and **Constant average**.
+
+![Topofactors against planar thickness, from Eq. 6](images/topofactor-curves.png)
+
+### How the tab applies it
+
+1. The tab solves the planar Thickogram for $t$ in nanometres, then forms $t/L$.
+2. It converts the energy ratio to the paper's $B = (E_o/E_s)^{0.75}$. The details box lists the plain energy ratio
+   as B and the exponentiated value as B (paper).
+3. Below $t/L = 0.1$ it uses the thin-film limit, between 0.1 and 3 it uses Eq. 6, and above 3 it holds the factor at
+   its value for 3 and warns. The factor therefore changes slightly at $t/L = 0.1$, where the limit and Eq. 6 meet.
+4. The corrected thickness $T = \mathrm{TF}\cdot t$ becomes the headline result; the planar value is kept beside it.
+
+### Conditions and limits
+
+- **Mean surface normal towards the analyser** ($\theta = 0$). The paper recommends this geometry and advises against
+  the so-called magic angle. The tab warns if $\theta$ is not 0.
+- **Orientation.** Fibres should lie with their axis perpendicular to the plane containing the source, sample and
+  analyser, to minimise X-ray shadowing. The shadowed-sphere row applies when half the sphere is in shadow.
+- **The overlayer is uniform, conformal and defect free**, and the overlayer and substrate each have a unique peak.
+- **Size.** Topofactors are for objects much larger than the electron attenuation length, from micrometre-scale
+  particles and fibres upwards. They are **not valid for nanoparticles and nanofibres**, whose radii are comparable
+  to $L$; for those the paper gives a separate model (its Eqs. 7 to 9) that the suite does not implement.
+- **Accuracy.** Eq. 6 is best when $B$ is close to 1; the paper notes that $B$ usually lies between 0.7 and 1.4, and
+  the tab warns outside that range. Experiments on polystyrene-coated silica capillaries gave a mean Topofactor of
+  about 0.79, within 10 percent of the cylinder value.
+- **Inconsistency in the paper.** Table 1 is captioned as parameters for Eqn (7) but belongs to Eqn (6). The sphere
+  value 0.67 is quoted at $t = 1.5$ in the text and at $T = 1.5$ in Table 2; Eq. 6 gives 0.66 at $t = 1.5$.
+
+## Spectrum simulation
+
+The Simulated spectrum pane draws what a given thickness would look like. It is an **estimate, not a fit**.
+
+The thickness is turned into relative peak areas by solving the Strohmeier equation for the overlayer to substrate
+ratio $q$, where $R$ are the RSFs:
+
+```math
+q = \frac{I_{ov}}{I_{sub}} = \frac{R_{ov}N_{ov}\lambda_{ov}}{R_{sub}N_{sub}\lambda_{sub}}\left[\exp\left(\frac{d}{\lambda_{ov}\sin\theta}\right)-1\right]
+```
+
+The substrate then carries a fraction $1/(1+q)$ of the total area and the overlayer $q/(1+q)$, shared between
+overlayer components in proportion to the areas you entered. Simulating at the calculated thickness therefore
+reproduces your entered area ratio exactly.
+
+Each component is a pseudo-Voigt line of the given width, with a Gaussian fraction $(1-\eta)$ and a Lorentzian
+fraction $\eta$ of equal full width at half maximum, and $\eta = 0.3$:
+
+```math
+(1-\eta)\,G(E) + \eta\,L(E)
+```
+
+Core levels with spin-orbit splitting are drawn as a doublet with the standard area ratio (2:1 for p, 3:2 for d, 4:3
+for f). The background is a self-consistent Shirley step, rising across the peak in proportion to the peak area
+accumulated at lower binding energy:
+
+```math
+B(E) = B_0 + \Delta B\,\frac{\int_{E_{min}}^{E} P(E')\,dE'}{\int_{E_{min}}^{E_{max}} P(E')\,dE'}
+```
+
+with $\Delta B$ equal to 15 percent of the peak height. Splitting, branching ratio and width are typical literature
+values, not measured ones, and the widths are editable.
+
+**What the simulation leaves out.** For simplicity it does not draw shake-up or shake-off satellites, plasmon or loss
+features, Auger lines, or the asymmetric tails of metal peaks. The most important case is Cu 2p3/2: the Cu(II)
+satellites of CuO and Cu(OH)2 carry roughly 35 to 39 percent of the Cu(II) area (main to satellite ratios of 1.89
+and 1.57, from [5]), so the drawn Cu(II) main peak is overstated. The figure says so, and shades the satellite
+region. If you use Cu 2p3/2 areas for a thickness, include the satellite in the Cu(II) area. Auger presets, such as
+the Cu LMM line, are not simulated.
+
+## IMFPs from TPP-2M
+
+Where the suite *computes* an IMFP instead of quoting a published value, it uses the TPP-2M predictive equation of
+Tanuma, Powell and Penn [6]. For a kinetic energy $E$ in eV it gives the IMFP in angstrom:
+
+```math
+\lambda = \frac{E}{E_p^{2}\left[\beta\ln(\gamma E) - C/E + D/E^{2}\right]}
+```
+
+with the parameters
+
+```math
+\beta = -0.10 + \frac{0.944}{\sqrt{E_p^{2}+E_g^{2}}} + 0.069\,\rho^{0.1}
+```
+
+```math
+\gamma = 0.191\,\rho^{-0.5},\qquad C = 1.97-0.91\,U,\qquad D = 53.4-20.8\,U
+```
+
+```math
+E_p = 28.8\sqrt{\frac{N_v\rho}{M}},\qquad U = \frac{N_v\rho}{M} = \frac{E_p^{2}}{829.4}
+```
+
+where $\rho$ is the density in g/cm3, $M$ the molar mass, $N_v$ the number of valence electrons per formula unit and
+$E_g$ the band gap in eV. The suite divides by 10 to give nanometres. The same code reproduces the oxide IMFPs
+that Biesinger quotes for Cu LMM electrons [5] to within 0.2 percent. Which presets use computed values, and the
+inputs behind them, are listed in [Presets and data](presets.md#presets-and-data).

@@ -178,8 +178,14 @@ def solution_line(a: float, b: float):
     return (0.0, y0), (2.0 * xb, y0 - xb * (b ** 0.75 - 0.5))
 
 
-def draw_nomogram(ax, result: Optional[ThickogramResult] = None, title: bool = True):
-    """Draw the thickogram on `ax`. With a result, add the red solution line, the marker and the value."""
+def draw_nomogram(ax, result: Optional[ThickogramResult] = None, title: bool = True,
+                  annotation: Optional[str] = None):
+    """
+    Draw the thickogram on `ax`. With a result, add the red solution line, the marker and the value.
+
+    `annotation` (optional) replaces the default "t = ... nm" line next to the marker, e.g. to show a Topofactor
+    correction ("planar t -> Topofactor -> T"). The nomogram itself is always the planar construction.
+    """
     ax.set_facecolor("white")
 
     x_vals = np.linspace(0.01, 6, 600)
@@ -232,7 +238,9 @@ def draw_nomogram(ax, result: Optional[ThickogramResult] = None, title: bool = T
         ax.plot([2 * x, 2 * x], [yk - 0.3, yk + 0.3], color="red", linewidth=2)
         (xa, ya), (xe, ye) = solution_line(result.a, result.b)
         ax.plot([xa, xe], [ya, ye], color="red", linewidth=2)
-        ax.text(2 * x + 0.6, 2.4, f"x = {x:.4f}\nt = {result.t_nm:.2f} nm", color="red", fontweight="bold")
+        second = annotation if annotation else f"t = {result.t_nm:.2f} nm"
+        # anchored by its TOP so a longer (Topofactor) annotation grows downwards instead of into the title
+        ax.text(2 * x + 0.6, 2.9, f"x = {x:.4f}\n{second}", color="red", fontweight="bold", va="top")
 
     if title:
         ax.set_title("Thickogram XPS Thickness Calculation")
