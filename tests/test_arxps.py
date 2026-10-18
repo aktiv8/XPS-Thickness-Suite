@@ -166,6 +166,11 @@ class Fits(unittest.TestCase):
         u = np.array([1.0, 1.155, 1.414, 2.0])
         self.assertTrue(AR.fit_rinf_free(u, 0.3 * u)["edge"])
 
+    def test_rinf_free_fit_says_when_the_exponential_is_nearly_linear_over_the_angles(self):
+        u = np.array([1.0, 1.155, 1.414, 2.0, 2.9])
+        fit = AR.fit_rinf_free(u, 4.0 * np.expm1(0.08 * u))              # k u_max = 0.23: R-inf and k are interchangeable
+        self.assertTrue(fit["edge"])
+
     def _rows(self, xs, tilts, rinf=0.55):
         return [AR.AngleRow(t, t, 100.0, 100.0 * rinf * math.expm1(x), rinf * math.expm1(x))
                 for t, x in zip(tilts, xs)]
@@ -221,6 +226,129 @@ class Fits(unittest.TestCase):
         ser = _series(S.two_state_series())
         res = AR.analyse_two_states(ser, _auto(ser), LAM, RINF)
         self.assertFalse(any("apart" in w for w in res.warnings))
+
+
+class FittedAreas(unittest.TestCase):
+    """Substrate and overlayer areas from CasaXPS-style fits stored in the VMS (synthetic, see synthetic.py)."""
+
+    def _roles(self, ser):
+        return AR.auto_roles(AR.read_fits(ser))
+
+    def test_the_trend_rule_finds_the_substrate_and_the_overlayer(self):
+        ser = _series(S.two_state_series(fitted=True))
+        fits = AR.read_fits(ser)
+        self.assertEqual(list(AR.state_names(fits).values()), ["Si El", "Si Ox"])
+        self.assertEqual(AR.auto_roles(fits), {"i0": AR.SUBSTRATE, "i1": AR.OVERLAYER})
+        shares = AR.state_shares(fits)
+        self.assertGreater(shares["i0"][0], shares["i0"][1])             # falls with angle
+        self.assertLess(shares["i1"][0], shares["i1"][1])                # rises
+
+    def test_a_thick_overlayer_that_dominates_is_still_the_overlayer(self):
+        ser = _series(S.two_state_series(d_nm=4.0, fitted=True))
+        self.assertEqual(self._roles(ser), {"i0": AR.SUBSTRATE, "i1": AR.OVERLAYER})
+
+    def test_a_state_whose_share_hardly_moves_is_not_assigned(self):
+        fits = AR.read_fits(_series(S.two_state_series(fitted=True)))
+        for f in fits:                                                   # make both states identical at every angle
+            for st in f.states.values():
+                for c in st.comps:
+                    c.area = 100.0
+        self.assertEqual(set(AR.auto_roles(fits).values()), {AR.IGNORE})
+
+    def test_use_rule_for_two_peak_mode(self):
+        fits = AR.read_fits(_series(S.two_state_series(fitted=True)))
+        self.assertEqual(AR.auto_use(fits, AR.SUBSTRATE), {"i0": AR.SUBSTRATE, "i1": AR.IGNORE})
+        self.assertEqual(AR.auto_use(fits, AR.OVERLAYER), {"i0": AR.IGNORE, "i1": AR.OVERLAYER})
+        one = AR.read_fits(_series(S.two_peak_series(fitted=True), "O1s Scan"))
+        self.assertEqual(AR.auto_use(one, AR.OVERLAYER), {"i0": AR.OVERLAYER})              # a lone state is always used
+
+    def test_two_states_recovers_the_thickness_exactly_and_matches_the_window_method(self):
+        blocks = S.two_state_series(d_nm=1.5, fitted=True)
+        ser = _series(blocks)
+        res = AR.analyse_fitted_states(ser, self._roles(ser), LAM, RINF, max_angle=80, transmission=False)
+        self.assertAlmostEqual(res.d_nm, 1.5, places=5)
+        for r in res.rows:
+            self.assertAlmostEqual(r.d_nm, 1.5, places=5)
+        self.assertEqual(res.warnings, [])
+        windows = AR.analyse_two_states(ser, _auto(ser), LAM, RINF, max_angle=80)
+        self.assertAlmostEqual(res.d_nm, windows.d_nm, delta=0.03)
+
+    def test_the_energy_drift_is_read_from_the_state_positions(self):
+        ser = _series(S.two_state_series(fitted=True, drift_ev=0.3))
+        res = AR.analyse_fitted_states(ser, self._roles(ser), LAM, RINF)
+        for r, tilt in zip(res.rows, S.DEFAULT_TILTS):
+            self.assertAlmostEqual(r.shift_ev, 0.3 * tilt / 75.0, places=6)
+
+    def test_the_charge_correction_changes_nothing_about_the_thickness(self):
+        a = _series(S.two_state_series(fitted=True))
+        b = _series(S.two_state_series(fitted=True, calib=0.7))
+        ra = AR.analyse_fitted_states(a, self._roles(a), LAM, RINF)
+        rb = AR.analyse_fitted_states(b, self._roles(b), LAM, RINF)
+        self.assertAlmostEqual(ra.d_nm, rb.d_nm, places=9)
+
+    def test_assigning_both_doublet_partners_is_what_makes_the_area(self):
+        ser = _series(S.two_state_series(fitted=True))
+        fits = AR.read_fits(ser)
+        total = fits[0].states["i0"].area
+        self.assertAlmostEqual(total, 60000.0 * math.exp(-1.5 / LAM), delta=1e-3 * total)     # 2p3/2 + 2p1/2
+
+    def test_both_roles_are_needed_and_a_block_without_a_fit_is_refused(self):
+        ser = _series(S.two_state_series(fitted=True))
+        with self.assertRaisesRegex(ValueError, "at least one overlayer state"):
+            AR.analyse_fitted_states(ser, {"i0": AR.SUBSTRATE, "i1": AR.IGNORE}, LAM, RINF)
+        with self.assertRaisesRegex(ValueError, "at least one substrate state"):
+            AR.analyse_fitted_states(ser, {"i0": AR.IGNORE, "i1": AR.OVERLAYER}, LAM, RINF)
+        with self.assertRaisesRegex(ValueError, "no CasaXPS fit"):
+            AR.analyse_fitted_states(_series(S.two_state_series()), {"i0": AR.SUBSTRATE}, LAM, RINF)
+
+    def test_several_fitted_azimuths(self):
+        from vamas import VamasFile
+        blocks = S.two_state_series(azimuths=(0.0, 90.0), d_by_azimuth={0.0: 1.2, 90.0: 1.8}, fitted=True)
+        series = VamasFile("", blocks).series("Si2p Scan", "exp1", "exp2")
+        roles = self._roles(series[0.0])
+        got = {az: AR.analyse_fitted_states(rows, roles, LAM, RINF, max_angle=80).d_nm for az, rows in series.items()}
+        self.assertAlmostEqual(got[0.0], 1.2, places=4)
+        self.assertAlmostEqual(got[90.0], 1.8, places=4)
+
+    def test_two_peaks_recovers_the_thickness_and_matches_the_thickogram(self):
+        blocks = S.two_peak_series(d_nm=1.5, fitted=True)
+        sub, ov = _series(blocks, "Si2p Scan"), _series(blocks, "O1s Scan")
+        fs, fo = AR.read_fits(sub), AR.read_fits(ov)
+        res = AR.analyse_fitted_peaks(sub, ov, AR.auto_use(fs, AR.SUBSTRATE), AR.auto_use(fo, AR.OVERLAYER), 2.93, 0.82,
+                                      532.0, 99.3, 1486.68, 3.0, max_angle=80)
+        self.assertAlmostEqual(res.d_nm, 1.5, places=5)
+        for r in res.rows:
+            want = TG.thickness(io=r.i_ov, is_=r.i_sub, so=2.93, ss=0.82, be_o=532.0, be_s=99.3, source_ev=1486.68,
+                                lam_nm=3.0, theta_normal_deg=r.angle_deg).t_nm
+            self.assertAlmostEqual(r.d_nm, want, places=9)
+
+    def test_the_transmission_function_is_applied_per_component_in_two_peak_mode(self):
+        import re
+        blocks = S.two_peak_series(d_nm=1.5, fitted=True)
+        for b in blocks:
+            if b.block_id == "O1s Scan":                      # a detector twice as sensitive at the O 1s energy
+                b.transmission = b.transmission * 2.0
+                b.counts = b.counts * 2.0
+                b.comments = [re.sub(r"Area (\S+)", lambda m: f"Area {float(m.group(1)) * 2.0:.8g}", c) for c in b.comments]
+        sub, ov = _series(blocks, "Si2p Scan"), _series(blocks, "O1s Scan")
+        fs, fo = AR.read_fits(sub), AR.read_fits(ov)
+        args = (AR.auto_use(fs, AR.SUBSTRATE), AR.auto_use(fo, AR.OVERLAYER), 2.93, 0.82, 532.0, 99.3, 1486.68, 3.0)
+        corrected = AR.analyse_fitted_peaks(sub, ov, *args, max_angle=80, transmission=True)
+        raw = AR.analyse_fitted_peaks(sub, ov, *args, max_angle=80, transmission=False)
+        self.assertAlmostEqual(corrected.d_nm, 1.5, places=5)
+        self.assertGreater(abs(raw.d_nm - 1.5), 0.1)
+
+    def test_the_fit_region_can_be_chosen_when_a_block_holds_several(self):
+        import synthetic
+        b = S.two_state_series(fitted=True)
+        extra = synthetic.casa_fit_lines("As 3d", 1440.0, 1450.0, 0.5,
+                                         [dict(name="As", area=123.0, ke=1445.0, fwhm=1.0, index=-1, group="As", rsf=0.5)])
+        for blk in b:
+            blk.comments += extra
+        ser = _series(b)
+        self.assertEqual(AR.fit_regions(ser), ["Si 2p", "As 3d"])
+        self.assertEqual(list(AR.state_names(AR.read_fits(ser, "As 3d")).values()), ["As"])
+        self.assertEqual(list(AR.state_names(AR.read_fits(ser, "Si 2p")).values()), ["Si El", "Si Ox"])
 
 
 class Azimuths(unittest.TestCase):

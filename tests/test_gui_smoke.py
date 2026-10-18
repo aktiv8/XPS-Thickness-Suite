@@ -393,6 +393,69 @@ class ARXPSTabSmoke(unittest.TestCase):
             tab.calculate()
         self.assertIn("R∞", shown.call_args[0][1])
 
+    def test_a_file_with_a_casaxps_fit_defaults_to_the_fitted_components(self):
+        app, tab = self._states_tab(S.two_state_series(fitted=True))
+        self.assertEqual(tab.area_source.get(), AT.SRC_FITS)
+        self.assertEqual(tab.setup_nb.tab(tab.wins_page, "text"), "3  Components")
+        self.assertIn("disabled", tab.per_second_cb.state())
+        self.assertIn("Si El", tab.fit_info.cget("text"))
+        self.assertEqual({k: v.get() for (sec, k), v in tab.roles.items()}, {"i0": "Substrate", "i1": "Overlayer"})
+        tab.calculate()                                   # no windows are needed
+        self.assertAlmostEqual(tab.results[None].d_nm, 1.5, places=4)
+        self.assertEqual(tab.readout_var.get(), "1.50 nm")
+        self.assertIn("stored CasaXPS fits", tab.details.get("1.0", "end"))
+        self.assertEqual(len(tab.table.get_children()), 6)
+        spectra = tab.figs["spectra"][0].axes[0]
+        self.assertGreaterEqual(len(spectra.lines), 6 + 2)               # six spectra and the two state markers
+
+    def test_the_assignment_can_be_edited(self):
+        app, tab = self._states_tab(S.two_state_series(fitted=True))
+        tab.roles[("main", "i1")].set("Ignore")
+        with mock.patch.object(AT.messagebox, "showerror") as shown:
+            tab.calculate()
+        self.assertIn("at least one overlayer", shown.call_args[0][1])
+        tab._refresh_components()                         # Auto-assign puts the guess back
+        self.assertEqual(tab.roles[("main", "i1")].get(), "Overlayer")
+
+    def test_switching_back_to_windows_works_on_the_same_file(self):
+        app, tab = self._states_tab(S.two_state_series(fitted=True))
+        tab.area_source.set(AT.SRC_WINDOWS)
+        tab._source_changed()
+        self.assertEqual(tab.setup_nb.tab(tab.wins_page, "text"), "3  Windows")
+        self.assertNotIn("disabled", tab.per_second_cb.state())
+        tab.v["max_angle"].set("80")
+        tab.calculate()
+        self.assertAlmostEqual(tab.results[None].d_nm, 1.5, delta=0.03)
+        self.assertNotIn("CasaXPS", tab.details.get("1.0", "end"))
+
+    def test_a_file_without_a_fit_stays_on_windows_and_the_fitted_choice_explains(self):
+        app, tab = self._states_tab(S.two_state_series())
+        self.assertEqual(tab.area_source.get(), AT.SRC_WINDOWS)
+        tab.area_source.set(AT.SRC_FITS)
+        tab._source_changed()
+        self.assertIn("no CasaXPS fit", tab.comp_info.cget("text"))
+        with mock.patch.object(AT.messagebox, "showerror") as shown:
+            tab.calculate()
+        self.assertTrue(shown.called)
+
+    def test_two_peaks_from_fits_prefills_the_rsfs_and_binding_energies(self):
+        app = _make_app(self)
+        tab = app.arxps
+        tab.load_file(self._write(S.two_peak_series(d_nm=1.5, fitted=True)))
+        tab.mode.set(AT.MODE_PEAKS)
+        tab._mode_changed()
+        tab.v["region_sub"].set("Si2p Scan")
+        tab.v["region_ov"].set("O1s Scan")
+        tab._region_changed()
+        self.assertEqual(tab.area_source.get(), AT.SRC_FITS)
+        self.assertEqual((tab.v["so"].get(), tab.v["ss"].get()), ("2.93", "0.82"))
+        self.assertEqual((tab.v["eo"].get(), tab.v["es"].get()), ("532.00", "99.30"))
+        tab.v["lam"].set("3.0")
+        tab.v["max_angle"].set("80")
+        tab.calculate()
+        self.assertAlmostEqual(tab.results[None].d_nm, 1.5, places=4)
+        self.assertEqual(len(tab.figs["spectra"][0].axes), 2)
+
     def test_changing_the_region_clears_the_windows(self):
         app, tab = self._states_tab(S.two_state_series())
         tab.auto_windows()

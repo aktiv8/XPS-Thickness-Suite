@@ -186,6 +186,7 @@ The setup has three pages. Work through them from left to right and press **Calc
 | Azimuth from | Optional: the field that holds the sample azimuth. If the file has several azimuths each is fitted separately |
 | Max angle | Angles above this are drawn but left out of the fit (default 70 degrees) |
 | Counts per second, Transmission-correct | Normalise the intensities; they cancel for two states of one peak but matter for two different peaks |
+| Areas from | *Windows + Shirley* integrates the spectra. *Fitted components* uses a peak fit that CasaXPS stored in the file; it is chosen automatically when the region has one |
 
 **2 Materials.** Optionally choose the substrate and overlayer presets, the same ones as on the Calculator tab: they fill
 the binding energies, lambda for the overlayer and, for two states of one peak, the ratio $R_\infty$ of the two layers
@@ -196,6 +197,12 @@ energies and lambda yourself; the photon energy is read from the file.
 peaks and the energy at which it is split; for two peaks it sets a window round each. The detection uses how the spectrum
 changes with angle, so it also works when the oxide peak is the taller one. **Always check the result on the Spectra
 plot**: the blue and orange areas should cover each state at every angle.
+
+**3 Components.** When the areas come from a CasaXPS fit this page replaces the windows. It lists the fitted states
+(components that share an INDEX, such as the two halves of a doublet, count as one) with each state's share of the fitted
+area at the lowest and highest angle, and a selector: *Substrate*, *Overlayer* or *Ignore*. The tab fills it in by
+the trend, a falling share meaning substrate and a rising share overlayer; change any row, or press *Auto-assign* to
+start again.
 
 ### Reading the results
 
@@ -222,12 +229,38 @@ region Si2p Scan, the presets *Si (metal/elemental)* and *SiO2* (lambda 3.89 nm,
 the value that was put in. The 75 degree point is left out by the 70 degree limit, and the free-intercept fit passes
 through the origin to within its error.
 
+### Using a peak fit from CasaXPS
+
+![The ARXPS tab on a file with a stored CasaXPS fit: the Components page and the measured spectra with the fitted positions](images/arxps-fitted.png)
+
+If you have fitted the region in CasaXPS and saved the file as VAMAS, open that file. The tab finds the fit, sets
+*Areas from* to *Fitted components* and fills the list on the Components page. The areas are taken exactly as CasaXPS
+stored them, so nothing is re-integrated and no window or background has to be chosen. This is the way to analyse
+states that overlap too much for a window split, such as the oxide and substrate components of Ga 3d on GaAs.
+
+- For **two states of one peak** pick the region; the substrate and overlayer states are sums of the states you assign.
+- For **two different peaks** choose the region holding the substrate fit and the region holding the overlayer fit
+  (each must be fitted); the sensitivity factors and binding energies are filled in from the fit and can be edited.
+  Keep *Transmission-correct* ticked, because the stored areas are raw counts.
+- If a block holds several fitted regions, such as Ga 3d and As 3d in one scan, a selector on the Components page
+  chooses which to use.
+- On the Spectra page the measured spectra are drawn with a dashed line at each fitted component position; the peak
+  shapes are not redrawn.
+
+### Worked example: a synthetic file with a stored fit
+
+The file `docs/sample/si-native-oxide-arxps-fitted.vms` holds the same synthetic series as above with a CasaXPS-style fit
+stored in each block (two doublets, Si El and Si Ox). Open it, choose the region Si2p Scan and the presets *Si (metal/elemental)*
+and *SiO2*: the tab selects the fitted components, makes Si El the substrate and Si Ox the overlayer, and gives
+**1.50 nm** after *Calculate and plot*, with no windows to set.
+
 ### Tips
 
 - Use a series with at least three angles spanning a good range of $1/\cos\theta$. Angles between about 0 and 60 degrees
   are the most reliable.
 - Two states less than about 2 eV apart (for example the oxide and the substrate component of Ga 3d in GaAs) overlap
-  too much for a window split. The tab warns, and the thickness is then only a rough estimate.
+  too much for a window split. The tab warns, and the thickness is then only a rough estimate; fit the peaks in
+  CasaXPS and use the fitted components instead.
 - The thickness uses the attenuation length you give, so its accuracy is limited by that number and by $R_\infty$. The
   *R-infinity-free* line in the details shows what the data alone prefer.
 - Real data often show an intercept above zero: contamination, roughness and elastic scattering all bend the line. The
@@ -257,6 +290,11 @@ their assumptions overlap.
   energies) are close to your peaks and that the lowest angle is first; set the envelope and split by hand on the
   Windows page if the two states are not resolved.
 - **The ARXPS thickness changes a lot when I move the split.** The two states overlap; see the tips under the ARXPS tab.
+- **The Components list is empty or says there is no fit.** The file has to be saved from CasaXPS with the fit in
+  place; a file that CasaXPS only opened, or the original instrument file, carries no fit. Switch *Areas from* to
+  *Windows + Shirley* to integrate the spectra instead.
+- **A state is assigned to the wrong side.** The guess uses how the share of each state changes with angle, which
+  fails for a state that hardly changes; set it by hand in the list.
 - **A preset says it has no binding energy.** Auger presets, such as Cu LMM, carry no binding energy; type the
   binding energy of your own peak.
 - **The numbers look about 30 percent off for copper.** Check that you did not mix the LMM and 2p3/2 presets.

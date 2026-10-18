@@ -13,9 +13,14 @@ The model is the one the other tabs use. With x = d / (lambda cos(theta)) and u 
 (the first is the B = 1 case of the second). In both cases x_i = k u_i with k = d / lambda, so the per-angle x_i fall
 on a straight line through the origin when plotted against 1/cos(theta). The slope gives the thickness.
 
-Peak areas: every spectrum is first shifted to match the reference (the lowest angle) by comparing line shapes, because
-charging and the flood gun move the peaks by a few tenths of an eV between angles; then a Shirley background is
-subtracted and the signal is integrated over fixed windows.
+Peak areas come from one of two places:
+
+* the spectra themselves: every spectrum is first shifted to match the reference (the lowest angle) by comparing line
+  shapes, because charging and the flood gun move the peaks by a few tenths of an eV between angles; then a Shirley
+  background is subtracted and the signal is integrated over fixed windows;
+* the peak fits stored in a VAMAS file saved by CasaXPS (see casa.py): the substrate and overlayer states are sums of the
+  stored component areas, which are used as they are. The states are told apart by how their share of the total area
+  changes with angle (falling = substrate, rising = overlayer) and the assignment can be edited.
 """
 import math
 from dataclasses import dataclass, field
@@ -23,6 +28,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+import casa
 import thickogram as TG
 
 _trapezoid = getattr(np, "trapezoid", None) or np.trapz
@@ -306,7 +312,7 @@ def fit_rinf_free(u: Sequence[float], r: Sequence[float]) -> Optional[dict]:
     """
     Fit R_i = Rinf (e^(k u_i) - 1) for BOTH k and Rinf (relative errors, so every angle counts alike). For a trial k the
     best Rinf is linear; k is found by a log-spaced scan refined by golden-section search. Returns None unless there are
-    at least 3 positive ratios; `edge` is True when the best k sits on the scan limit (the data cannot pin it down).
+    at least 3 positive ratios; `edge` is True when the data cannot pin the pair down (best k on the scan limit, or nearly linear in u).
     """
     u, r = np.asarray(u, dtype=float), np.asarray(r, dtype=float)
     if len(u) < 3 or np.any(r <= 0):
@@ -331,12 +337,24 @@ def fit_rinf_free(u: Sequence[float], r: Sequence[float]) -> Optional[dict]:
             a = c1
     k = 0.5 * (a + b)
     cost, rinf = solve(k)
-    return {"k": k, "rinf": rinf, "cost": cost, "edge": j in (0, len(ks) - 1)}
+    # Not determined when the best k is on the scan limit or the exponential is nearly linear over the angles used
+    # (k u_max below 0.5): R_inf and k are then interchangeable and any pair will do.
+    weak = k * float(np.max(u)) < 0.5
+    return {"k": k, "rinf": rinf, "cost": cost, "edge": j in (0, len(ks) - 1) or weak}
 
 
 # ---------------------------------------------------------------------------------------------------------------
 # Series analysis
 # ---------------------------------------------------------------------------------------------------------------
+
+@dataclass
+class FitView:
+    """What the Spectra page needs to show one angle of a fitted region (peak shapes are not redrawn)."""
+    block: object
+    shift_ev: float                   # drift of the substrate state relative to the first angle
+    norm: float                       # raw stored area used to normalise the drawn spectrum
+    marks: List[Tuple[str, float, str]] = field(default_factory=list)      # (state name, BE, role)
+
 
 @dataclass
 class AngleRow:
@@ -352,6 +370,8 @@ class AngleRow:
     shift_ev: float = 0.0
     sub: Optional[Extraction] = None
     ov: Optional[Extraction] = None
+    fit_sub: Optional[FitView] = None          # set when the areas came from stored CasaXPS fits
+    fit_ov: Optional[FitView] = None
 
     @property
     def u(self) -> float:
@@ -532,6 +552,179 @@ def analyse_two_peaks(sub_series: Sequence[Tuple[float, object]], ov_series: Seq
             ratio = TG.ratio_a(eo.area_sub, es.area_sub, so, ss)
         rows.append(AngleRow(_emission(tilt, angle_offset), tilt, es.area_sub, eo.area_sub, ratio,
                              shift_ev=max(abs(es.shift_ev), abs(eo.shift_ev)), sub=es, ov=eo))
+    if not rows:
+        raise ValueError("The two regions share no tilt angle.")
+    return fit_series(rows, lam_nm, lambda a: TG.solve_x(a, b), max_angle, mode=2, b=b)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Areas from stored CasaXPS fits
+# ---------------------------------------------------------------------------------------------------------------
+
+SUBSTRATE, OVERLAYER, IGNORE = "substrate", "overlayer", "ignore"
+MIN_SHARE_CHANGE = 0.02         # a state whose share of the fitted area moves less than this is not assigned
+
+
+@dataclass
+class FitAngle:
+    """The chemical states of one fitted block (one angle of one region)."""
+    tilt: float
+    block: object
+    states: Dict[str, casa.StateArea]
+
+
+def fit_regions(series) -> List[str]:
+    """Names of the CASA fit regions held in the first block of a series (e.g. 'Ga 3d', 'As 3d')."""
+    for _, blk in series:
+        fit = casa.fits_of(blk)
+        if fit is not None:
+            return [r.name for r in fit.regions]
+    return []
+
+
+def read_fits(series, region: Optional[str] = None) -> List[FitAngle]:
+    """The fitted states of every block of a series, lowest angle first. Raises ValueError for a block without a fit."""
+    out = []
+    for tilt, blk in series:
+        fit = casa.fits_of(blk)
+        if fit is None:
+            raise ValueError(f"The {tilt:g} degree block of '{blk.block_id}' has no CasaXPS fit: save the file from "
+                             "CasaXPS with the fit in place, or use the windows method.")
+        out.append(FitAngle(tilt, blk, casa.states_of(fit, blk.hv_ev, region)))
+    return out
+
+
+def state_names(fits: Sequence[FitAngle]) -> Dict[str, str]:
+    """{state key: name} over all angles, in order of first appearance."""
+    names: Dict[str, str] = {}
+    for f in fits:
+        for key, st in f.states.items():
+            names.setdefault(key, st.name)
+    return names
+
+
+def state_shares(fits: Sequence[FitAngle]) -> Dict[str, Tuple[float, float]]:
+    """{state key: (share of the total fitted area at the lowest angle, at the highest angle)}; missing counts as 0."""
+    def shares(f):
+        total = sum(st.area for st in f.states.values())
+        return {k: (st.area / total if total > 0 else 0.0) for k, st in f.states.items()}
+    lo, hi = shares(fits[0]), shares(fits[-1])
+    return {k: (lo.get(k, 0.0), hi.get(k, 0.0)) for k in state_names(fits)}
+
+
+def state_trends(fits: Sequence[FitAngle]) -> Dict[str, float]:
+    """
+    How each state's share of the total fitted area changes from the lowest to the highest angle (positive = grows
+    with angle, as an overlayer does).
+    """
+    return {k: hi - lo for k, (lo, hi) in state_shares(fits).items()}
+
+
+def auto_roles(fits: Sequence[FitAngle], min_change: float = MIN_SHARE_CHANGE) -> Dict[str, str]:
+    """Substrate where a state's share falls with angle, overlayer where it rises, ignore where it hardly moves."""
+    return {k: (SUBSTRATE if d < -min_change else OVERLAYER if d > min_change else IGNORE)
+            for k, d in state_trends(fits).items()}
+
+
+def auto_use(fits: Sequence[FitAngle], role: str, min_change: float = MIN_SHARE_CHANGE) -> Dict[str, str]:
+    """
+    For the two-peak mode, which states of a region to use for `role` (substrate or overlayer): the only state of a
+    region is always used; with several, those whose share moves the right way with angle.
+    """
+    names = state_names(fits)
+    if len(names) == 1:
+        return {k: role for k in names}
+    roles = auto_roles(fits, min_change)
+    return {k: (role if roles[k] == role else IGNORE) for k in names}
+
+
+def _transmission_factor(block, ke_raw: float) -> float:
+    """Transmission function of the block at a kinetic energy, in units of TRANSMISSION_SCALE (1 if there is none)."""
+    t = getattr(block, "transmission", None)
+    if t is None or not np.all(np.asarray(t) > 0):
+        return 1.0
+    ke = block.hv_ev - np.asarray(block.be_ev, dtype=float)               # descending with ascending BE
+    return float(np.interp(ke_raw, ke[::-1], np.asarray(t, dtype=float)[::-1])) / TRANSMISSION_SCALE
+
+
+def _role_sum(f: FitAngle, roles: Dict[str, str], role: str, transmission: bool):
+    """(area, raw area, area-weighted BE, [(name, BE, role)]) of the states of `f` assigned to `role`."""
+    area = raw = wbe = 0.0
+    marks = []
+    for key, st in f.states.items():
+        if roles.get(key) != role:
+            continue
+        for c in st.comps:
+            corr = c.area / _transmission_factor(f.block, c.ke_raw) if transmission else c.area
+            area += corr
+            raw += c.area
+            wbe += c.area * c.be
+        marks.append((st.name, st.be, role))
+    return area, raw, (wbe / raw if raw > 0 else None), marks
+
+
+def _check_roles(fits, roles, want: Sequence[str]) -> None:
+    present = {roles.get(k) for k in state_names(fits)}
+    missing = [w for w in want if w not in present]
+    if missing:
+        raise ValueError("Assign at least one " + " and one ".join(missing) + " state (Components page).")
+
+
+def analyse_fitted_states(series, roles: Dict[str, str], lam_nm: float, rinf: float, angle_offset: float = 0.0,
+                          max_angle: float = DEFAULT_MAX_ANGLE, transmission: bool = True,
+                          region: Optional[str] = None, fits: Optional[List[FitAngle]] = None) -> ARXPSResult:
+    """
+    Mode 1 from stored fits: the substrate and overlayer states are sums of the assigned states of one fitted region
+    (series = [(tilt, Block), ...], lowest angle first); everything after the areas is shared with the window method.
+    """
+    if not (math.isfinite(rinf) and rinf > 0):
+        raise ValueError("Rinf must be a positive number.")
+    fits = fits or read_fits(series, region)
+    _check_roles(fits, roles, (SUBSTRATE, OVERLAYER))
+    rows, ref_be = [], None
+    for f in fits:
+        s_area, s_raw, s_be, s_marks = _role_sum(f, roles, SUBSTRATE, transmission)
+        o_area, _, _, o_marks = _role_sum(f, roles, OVERLAYER, transmission)
+        if s_be is not None and ref_be is None:
+            ref_be = s_be
+        shift = (s_be - ref_be) if (s_be is not None and ref_be is not None) else 0.0
+        view = FitView(f.block, shift, s_raw, [(n, b - shift, r) for n, b, r in s_marks + o_marks])
+        ratio = o_area / s_area if s_area > 0 else None
+        rows.append(AngleRow(_emission(f.tilt, angle_offset), f.tilt, s_area, o_area, ratio, shift_ev=shift,
+                             fit_sub=view, fit_ov=view))
+    return fit_series(rows, lam_nm, lambda r: math.log1p(r / rinf), max_angle, mode=1, rinf=rinf)
+
+
+def analyse_fitted_peaks(sub_series, ov_series, sub_roles: Dict[str, str], ov_roles: Dict[str, str], so: float,
+                         ss: float, be_o: float, be_s: float, source_ev: float, lam_nm: float,
+                         angle_offset: float = 0.0, max_angle: float = DEFAULT_MAX_ANGLE, transmission: bool = True,
+                         sub_region: Optional[str] = None, ov_region: Optional[str] = None) -> ARXPSResult:
+    """
+    Mode 2 from stored fits: the substrate states of one fitted region against the overlayer states of another,
+    matched by tilt, through the Thickogram equation. With `transmission` each stored area is divided by the block's
+    transmission function at the component's kinetic energy, which matters here because the two peaks differ in KE.
+    """
+    b = TG.energy_ratio_b(be_o, be_s, source_ev)
+    fs, fo = read_fits(sub_series, sub_region), read_fits(ov_series, ov_region)
+    _check_roles(fs, sub_roles, (SUBSTRATE,))
+    _check_roles(fo, ov_roles, (OVERLAYER,))
+    ov_by_tilt = {round(f.tilt, 3): f for f in fo}
+    rows, ref_s, ref_o = [], None, None
+    for f in fs:
+        g = ov_by_tilt.get(round(f.tilt, 3))
+        if g is None:
+            continue
+        s_area, s_raw, s_be, s_marks = _role_sum(f, sub_roles, SUBSTRATE, transmission)
+        o_area, o_raw, o_be, o_marks = _role_sum(g, ov_roles, OVERLAYER, transmission)
+        ref_s = s_be if (ref_s is None and s_be is not None) else ref_s
+        ref_o = o_be if (ref_o is None and o_be is not None) else ref_o
+        sh_s = (s_be - ref_s) if (s_be is not None and ref_s is not None) else 0.0
+        sh_o = (o_be - ref_o) if (o_be is not None and ref_o is not None) else 0.0
+        ratio = TG.ratio_a(o_area, s_area, so, ss) if (s_area > 0 and o_area > 0) else None
+        rows.append(AngleRow(_emission(f.tilt, angle_offset), f.tilt, s_area, o_area, ratio,
+                             shift_ev=max(abs(sh_s), abs(sh_o)),
+                             fit_sub=FitView(f.block, sh_s, s_raw, [(n, e - sh_s, r) for n, e, r in s_marks]),
+                             fit_ov=FitView(g.block, sh_o, o_raw, [(n, e - sh_o, r) for n, e, r in o_marks])))
     if not rows:
         raise ValueError("The two regions share no tilt angle.")
     return fit_series(rows, lam_nm, lambda a: TG.solve_x(a, b), max_angle, mode=2, b=b)

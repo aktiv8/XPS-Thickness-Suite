@@ -17,12 +17,17 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 import arxps as AR
+import casa
 import vamas as VM
 from gui_common import ACCENT, BADGE, CARD, MUTED, Tooltip, _to_float
 
 SUB_COLOUR, OV_COLOUR = "#2563eb", "#d97706"
 NO_AZIMUTH = "None (single azimuth)"
 MODE_STATES, MODE_PEAKS = 1, 2
+SRC_WINDOWS = "Windows + Shirley (spectra)"
+SRC_FITS = "Fitted components (CasaXPS)"
+ROLE_LABELS = {AR.SUBSTRATE: "Substrate", AR.OVERLAYER: "Overlayer", AR.IGNORE: "Ignore"}
+USE_LABEL = "Use"
 
 
 def _az_label(az):
@@ -44,7 +49,11 @@ class ARXPSTab(ttk.Frame):
         self.mode = tk.IntVar(value=MODE_STATES)
         self.per_second = tk.BooleanVar(value=True)
         self.transmission = tk.BooleanVar(value=True)
-        keys = ("region", "region_sub", "region_ov", "angle_src", "azim_src", "view_az", "offset", "max_angle", "lam",
+        self.area_source = tk.StringVar(value=SRC_WINDOWS)
+        self.roles = {}                     # (section, state key) -> StringVar on the Components page
+        self.state_label = {}               # (section, state key) -> state name
+        self.fit_note = ""                  # which states were used, for the details box
+        keys = ("fit_region", "fit_region_ov", "region", "region_sub", "region_ov", "angle_src", "azim_src", "view_az", "offset", "max_angle", "lam",
                 "rinf", "so", "ss", "eo", "es", "hv", "env_lo", "env_hi", "split", "s_lo", "s_hi", "o_lo", "o_hi")
         self.v = {k: tk.StringVar() for k in keys}
         self.v["offset"].set("0")
@@ -92,7 +101,7 @@ class ARXPSTab(ttk.Frame):
         nb.add(data, text="1  Data")
         nb.add(mats, text="2  Materials")
         nb.add(wins, text="3  Windows")
-        self.setup_nb = nb
+        self.setup_nb, self.wins_page = nb, wins
         self._build_data_page(data)
         self._build_materials_page(mats)
         self._build_windows_page(wins)
@@ -130,19 +139,21 @@ class ARXPSTab(ttk.Frame):
                                        "Where the tilt comes from. The K-Alpha writes the stage tilt into experimental "
                                        "variable 1, which the file only calls 'Exp Variable 1'.", width=24)
         self._entry(f, "offset", 8, "Offset (°):", "Added to the tilt to give the emission angle from the surface "
-                    "normal. 0 for a stage tilt measured from normal emission (K-Alpha).")
+                    "normal. 0 for a stage tilt measured from normal emission (K-Alpha).", width=6)
         _, self.azim_cb = self._combo(f, self.v["azim_src"], 9, "Azimuth from:",
                                       "Optional: the field holding the sample azimuth. If the file has several azimuths "
                                       "each is fitted separately and the thickness is shown against azimuth.", width=24)
         self.view_lbl, self.view_cb = self._combo(f, self.v["view_az"], 10, "Show azimuth:",
                                                   "Which azimuth the Spectra plot and the table show.", width=10)
         self.view_cb.bind("<<ComboboxSelected>>", lambda e: self._view_changed())
-        self._entry(f, "max_angle", 11, "Max angle (°):", "Angles above this are drawn but left out of the fit: the "
-                    "simple exponential model fails at grazing emission (elastic scattering, roughness).")
+        self._entry(f, "max_angle", 8, "Max angle (°):", "Angles above this are drawn but left out of the fit: the "
+                    "simple exponential model fails at grazing emission (elastic scattering, roughness).", col=2,
+                    width=6)
         opts = ttk.Frame(f, style="Card.TFrame")
         opts.grid(row=12, column=0, columnspan=4, sticky="w", pady=(4, 0))
         c1 = ttk.Checkbutton(opts, text="Counts per second", variable=self.per_second, style="Card.TCheckbutton")
         c1.pack(side="left")
+        self.per_second_cb = c1
         c2 = ttk.Checkbutton(opts, text="Transmission-correct", variable=self.transmission, style="Card.TCheckbutton")
         c2.pack(side="left", padx=(10, 0))
         Tooltip(c1, "Divide counts by scans × dwell. The K-Alpha stores raw counts summed over the scans, so this is "
@@ -150,6 +161,14 @@ class ARXPSTab(ttk.Frame):
         Tooltip(c2, "Divide by the Transmission column of the file. Needed when the two peaks are at different "
                     "kinetic energies; it cancels (to ~1%) for two states of one peak.")
         self.angle_cb.bind("<<ComboboxSelected>>", lambda e: self._clear_windows())
+        _, self.src_cb = self._combo(f, self.area_source, 13, "Areas from:",
+                                     "Windows + Shirley integrates the spectra. Fitted components uses the peak fit "
+                                     "that CasaXPS stored in the VMS file: the substrate and overlayer areas are sums of "
+                                     "the fitted components, taken as they are.", [SRC_WINDOWS, SRC_FITS], width=28)
+        self.src_cb.bind("<<ComboboxSelected>>", lambda e: self._source_changed())
+        self.fit_info = ttk.Label(f, text="", style="CardMuted.TLabel", wraplength=300, justify="left")
+        if not self.compact:                      # the laptop layout has no room; the Components page says the same
+            self.fit_info.grid(row=14, column=0, columnspan=4, sticky="w")
 
     def _build_materials_page(self, f):
         self.sub_lbl, self.sub_cb = self._combo(f, self.sub_preset, 0, "Substrate:", "Optional preset (from the "
@@ -203,7 +222,19 @@ class ARXPSTab(ttk.Frame):
                         "between the window ends).")
             self._entry(p, f"{tag}_hi", 3 * r + 2, "  window to (eV):", "High-BE end of the window.")
 
+        self.comp_frame = ttk.Frame(f, style="Card.TFrame")
+        self.comp_frame.grid(row=0, column=0, sticky="nw")
+        self.comp_info = ttk.Label(self.comp_frame, text="", style="CardMuted.TLabel", wraplength=320, justify="left")
+        self.comp_info.grid(row=0, column=0, sticky="w")
+        self.comp_grid = ttk.Frame(self.comp_frame, style="Card.TFrame")
+        self.comp_grid.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        reassign = ttk.Button(self.comp_frame, text="Auto-assign", command=self._refresh_components)
+        reassign.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        Tooltip(reassign, "Reset every state to the guess from how its share of the fitted area changes with angle: "
+                          "falling = substrate, rising = overlayer, hardly moving = ignore.")
+
         btns = ttk.Frame(f, style="Card.TFrame")
+        self.win_btns = btns
         btns.grid(row=1, column=0, sticky="w", pady=(8, 0))
         auto = ttk.Button(btns, text="Auto-detect windows", command=self.auto_windows)
         auto.pack(side="left")
@@ -222,10 +253,29 @@ class ARXPSTab(ttk.Frame):
             (w.grid_remove if states else w.grid)()
         (self.states_frame.grid if states else self.states_frame.grid_remove)()
         (self.peaks_frame.grid_remove if states else self.peaks_frame.grid)()
-        (self.win_states.grid if states else self.win_states.grid_remove)()
-        (self.win_peaks.grid_remove if states else self.win_peaks.grid)()
+        self._layout_windows()
         self._clear_windows()
         self._fill_regions()
+
+    def _fitted(self):
+        return self.area_source.get() == SRC_FITS
+
+    def _layout_windows(self):
+        """Page 3 shows the windows, or the fitted components when the areas come from the CasaXPS fits."""
+        states, fitted = self.mode.get() == MODE_STATES, self._fitted()
+        show = {self.win_states: states and not fitted, self.win_peaks: not states and not fitted,
+                self.win_btns: not fitted, self.win_note: not fitted, self.comp_frame: fitted}
+        for widget, on in show.items():
+            (widget.grid if on else widget.grid_remove)()
+        self.setup_nb.tab(self.wins_page, text="3  Components" if fitted else "3  Windows")
+        self.per_second_cb.state(["disabled"] if fitted else ["!disabled"])
+
+    def _source_changed(self):
+        self._layout_windows()
+        if self._fitted():
+            self._refresh_components()
+        else:
+            self.fit_info.configure(text="")
 
     def _fill_regions(self):
         names = self.file.regions() if self.file else []
@@ -266,7 +316,24 @@ class ARXPSTab(ttk.Frame):
         if blocks and blocks[0].hv_ev and not self.v["hv"].get():
             self.v["hv"].set(f"{blocks[0].hv_ev:g}")
         self._clear_windows()
+        self._detect_fits()
         self._set_badge("idle", f"{self.file_label.get()}: choose the materials, then Calculate & plot.")
+
+    def _detect_fits(self):
+        """Use the fitted components by default when every chosen region carries a CasaXPS fit."""
+        regs = [r for r in self._regions_in_use() if r]
+        has = bool(regs)
+        try:
+            for r in regs:
+                has = has and bool(AR.fit_regions(self._reference_series(r)))
+        except ValueError:
+            has = False
+        self.area_source.set(SRC_FITS if has else SRC_WINDOWS)
+        self._layout_windows()
+        if has:
+            self._refresh_components()
+        else:
+            self.fit_info.configure(text="")
 
     def _source_key(self, label):
         for key, text in VM.ANGLE_SOURCES.items():
@@ -304,6 +371,104 @@ class ARXPSTab(ttk.Frame):
                 pass
         self._clear_windows()
         self._set_badge("idle", f"{var.get()}: preset values filled in (edit anything). Check the windows, then calculate.")
+
+    # --- fitted components ----------------------------------------------------------------------------
+    def _fit_region_name(self, region, key):
+        """(CASA fit region to use for a block region, all CASA regions in it)."""
+        names = AR.fit_regions(self._reference_series(region))
+        pick = self.v[key].get()
+        return (pick if pick in names else (names[0] if names else None)), names
+
+    def _refresh_components(self):
+        """Rebuild the list of fitted states with the automatic substrate / overlayer guess."""
+        for widget in self.comp_grid.winfo_children():
+            widget.destroy()
+        self.roles, self.state_label = {}, {}
+        if not self.file:
+            self.comp_info.configure(text="Open a VAMAS file first.")
+            return
+        if self.mode.get() == MODE_STATES:
+            sections = [("main", self.v["region"].get(), "fit_region", None)]
+        else:
+            sections = [("sub", self.v["region_sub"].get(), "fit_region", AR.SUBSTRATE),
+                        ("ov", self.v["region_ov"].get(), "fit_region_ov", AR.OVERLAYER)]
+        row, found = 0, []
+        try:
+            for sec, region, key, role in sections:
+                name, names = self._fit_region_name(region, key)
+                if name is None:
+                    raise ValueError(f"'{region}' holds no CasaXPS fit: choose another region, or use the windows method.")
+                fits = AR.read_fits(self._reference_series(region), name)
+                ttk.Label(self.comp_grid, text=region + (" (substrate peak)" if role == AR.SUBSTRATE else
+                                                         " (overlayer peak)" if role else ""),
+                          style="RowHead.TLabel").grid(row=row, column=0, columnspan=3, sticky="w", pady=(4, 0))
+                row += 1
+                if len(names) > 1:
+                    combo = ttk.Combobox(self.comp_grid, textvariable=self.v[key], values=names, state="readonly", width=12)
+                    self.v[key].set(name)
+                    combo.grid(row=row, column=0, columnspan=3, sticky="w", pady=2)
+                    combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_components())
+                    Tooltip(combo, "This block holds several fitted regions: choose the one to use.")
+                    row += 1
+                guess = AR.auto_roles(fits) if role is None else AR.auto_use(fits, role)
+                shares = AR.state_shares(fits)
+                for k, nm in AR.state_names(fits).items():
+                    lo, hi = shares[k]
+                    ttk.Label(self.comp_grid, text=nm, style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=1)
+                    ttk.Label(self.comp_grid, text=f"{lo:.0%} to {hi:.0%}", style="CardMuted.TLabel").grid(
+                        row=row, column=1, sticky="w", padx=8)
+                    labels = ([ROLE_LABELS[AR.SUBSTRATE], ROLE_LABELS[AR.OVERLAYER], ROLE_LABELS[AR.IGNORE]]
+                              if role is None else [USE_LABEL, ROLE_LABELS[AR.IGNORE]])
+                    var = tk.StringVar(value=ROLE_LABELS[guess[k]] if role is None else
+                                       (USE_LABEL if guess[k] != AR.IGNORE else ROLE_LABELS[AR.IGNORE]))
+                    ttk.Combobox(self.comp_grid, textvariable=var, values=labels, state="readonly", width=10).grid(
+                        row=row, column=2, sticky="w", pady=1)
+                    self.roles[(sec, k)] = var
+                    self.state_label[(sec, k)] = nm
+                    row += 1
+                found.append(f"{region}: {', '.join(AR.state_names(fits).values())}")
+                self._prefill_from_fit(sec, region, name)
+        except ValueError as exc:
+            self.comp_info.configure(text=str(exc))
+            self.fit_info.configure(text=str(exc))
+            return
+        self.comp_info.configure(text="Column 2 is each state's share of the fitted area at the lowest and highest "
+                                      "angle. Substrate = share falls, overlayer = share rises. Change any row.")
+        self.fit_info.configure(text="CasaXPS fits found: " + "; ".join(found) + ".")
+
+    def _prefill_from_fit(self, section, region, fit_region):
+        """Two-peak mode: RSF and binding energy of each peak from the fit, when still at their defaults."""
+        if section == "main":
+            return
+        blk = self._reference_series(region)[0][1]
+        fit = casa.fits_of(blk)
+        reg = next((r for r in fit.regions if r.name == fit_region), None)
+        states = casa.states_of(fit, blk.hv_ev, fit_region)
+        be = max(states.values(), key=lambda st: st.area).be if states else None
+        for key, value in zip(("ss", "es") if section == "sub" else ("so", "eo"), ((reg.rsf if reg else None), be)):
+            if value and self.v[key].get() in ("", "1"):
+                self.v[key].set(f"{value:g}" if key in ("so", "ss") else f"{value:.2f}")
+
+    def _roles(self, section):
+        """{state key: role} of a section of the Components page."""
+        reverse = {label: role for role, label in ROLE_LABELS.items()}
+        out = {}
+        for (sec, key), var in self.roles.items():
+            if sec != section:
+                continue
+            label = var.get()
+            out[key] = (AR.SUBSTRATE if section == "sub" else AR.OVERLAYER) if label == USE_LABEL else reverse[label]
+        return out
+
+    def _fit_summary(self):
+        parts = []
+        for sec, text in (("main", None), ("sub", "substrate"), ("ov", "overlayer")):
+            for role, label in ((AR.SUBSTRATE, "substrate"), (AR.OVERLAYER, "overlayer")):
+                names = [self.state_label[(s, k)] for (s, k), _ in self.roles.items()
+                         if s == sec and self._roles(sec).get(k) == role]
+                if names and (text is None or text == label):
+                    parts.append(f"{label}: {', '.join(names)}")
+        return "; ".join(parts)
 
     # --- file ---------------------------------------------------------------------------------------
     def open_file(self):
@@ -448,7 +613,9 @@ class ARXPSTab(ttk.Frame):
         lam = self._num("lam", "λ overlayer", positive=True)
         ps, tr = self.per_second.get(), self.transmission.get()
         results = {}
-        if self.mode.get() == MODE_STATES:
+        if self._fitted():
+            results = self._calculate_fitted(angle_src, az_src, offset, max_angle, lam, tr)
+        elif self.mode.get() == MODE_STATES:
             region = self.v["region"].get()
             rinf = self._num("rinf", "R∞", positive=True)
             if not self.v["env_lo"].get():
@@ -486,6 +653,8 @@ class ARXPSTab(ttk.Frame):
                         sub_reference=refs[0], ov_reference=refs[1])
             if not results:
                 raise ValueError("The two regions have no azimuth in common.")
+        if not self._fitted():
+            self.fit_note = ""
         for az, res in results.items():
             res.azimuth = az
         self.results = results
@@ -496,6 +665,43 @@ class ARXPSTab(ttk.Frame):
         for w in (self.view_lbl, self.view_cb):
             (w.grid if len(keys) > 1 else w.grid_remove)()
         self._present()
+
+    def _calculate_fitted(self, angle_src, az_src, offset, max_angle, lam, tr):
+        """Areas from the stored CasaXPS fits (the windows are not used)."""
+        if not self.roles:
+            self._refresh_components()
+        if not self.roles:
+            raise ValueError(self.comp_info.cget("text") or "No fitted components to use.")
+        results = {}
+        if self.mode.get() == MODE_STATES:
+            region = self.v["region"].get()
+            rinf = self._num("rinf", "R∞", positive=True)
+            series = self.file.series(region, angle_src, az_src)
+            if not series:
+                raise ValueError("No block of that region has an angle in the chosen field.")
+            fit_region = self._fit_region_name(region, "fit_region")[0]
+            roles = self._roles("main")
+            for az, rows in series.items():
+                results[az] = AR.analyse_fitted_states(rows, roles, lam, rinf, offset, max_angle, tr, region=fit_region)
+        else:
+            reg_s, reg_o = self.v["region_sub"].get(), self.v["region_ov"].get()
+            if reg_s == reg_o:
+                raise ValueError("Choose two different regions for the substrate and overlayer peaks.")
+            ser_s, ser_o = self.file.series(reg_s, angle_src, az_src), self.file.series(reg_o, angle_src, az_src)
+            if not ser_s or not ser_o:
+                raise ValueError("No block of those regions has an angle in the chosen field.")
+            for az in ser_s:
+                if az in ser_o:
+                    results[az] = AR.analyse_fitted_peaks(
+                        ser_s[az], ser_o[az], self._roles("sub"), self._roles("ov"),
+                        self._num("so", "RSF overlayer", True), self._num("ss", "RSF substrate", True),
+                        self._num("eo", "BE overlayer"), self._num("es", "BE substrate"), self._num("hv", "Source", True),
+                        lam, offset, max_angle, tr, sub_region=self._fit_region_name(reg_s, "fit_region")[0],
+                        ov_region=self._fit_region_name(reg_o, "fit_region_ov")[0])
+            if not results:
+                raise ValueError("The two regions have no azimuth in common.")
+        self.fit_note = "Areas: stored CasaXPS fits, used as they are. " + self._fit_summary() + "."
+        return results
 
     def _view_result(self):
         for az, res in self.results.items():
@@ -551,7 +757,8 @@ class ARXPSTab(ttk.Frame):
                 lines.append(f"  R∞ used = {r.rinf:.4g}")
             if r.b is not None:
                 lines.append(f"  B = KEo/KEs = {r.b:.4g}")
-        lines += ["", "Angles from the surface normal; windows follow the peak at each angle (Shirley background)."]
+        lines += ["", self.fit_note or "Angles from the surface normal; windows follow the peak at each angle "
+                                      "(Shirley background)."]
         text = "\n".join(lines)
         self.details.configure(state="normal")
         self.details.delete("1.0", "end")
@@ -634,6 +841,8 @@ class ARXPSTab(ttk.Frame):
         return {id(r): cm.viridis(0.0 if hi == lo else 0.9 * (r.angle_deg - lo) / (hi - lo)) for r in res.rows}
 
     def _draw_spectra(self, fig, res):
+        if any(r.fit_sub is not None for r in res.rows):
+            return self._draw_spectra_fitted(fig, res)
         fig.clear()
         colours = self._angle_colours(res)
         panels = ([("sub", "Both states, normalised to the substrate-state area")] if res.mode == 1
@@ -674,6 +883,43 @@ class ARXPSTab(ttk.Frame):
                          ha="right", va="top", fontsize=8, color=MUTED)
         fig.suptitle("Check that the shaded areas cover each state at every angle (dotted = excluded angles)",
                      fontsize=9, color=MUTED)
+        fig.subplots_adjust(left=0.08, right=0.98, top=0.88, bottom=0.14, wspace=0.25)
+
+    def _draw_spectra_fitted(self, fig, res):
+        """Measured spectra (aligned on the substrate state, normalised by its stored area) with the fitted positions."""
+        fig.clear()
+        colours = self._angle_colours(res)
+        panels = ([("sub", "Both states, normalised to the substrate-state area")] if res.mode == 1
+                  else [("sub", "Substrate peak"), ("ov", "Overlayer peak")])
+        axes = fig.subplots(1, len(panels), squeeze=False)[0]
+        role_colour = {AR.SUBSTRATE: SUB_COLOUR, AR.OVERLAYER: OV_COLOUR}
+        for ax, (which, title) in zip(axes, panels):
+            marks = None
+            for r in res.rows:
+                view = r.fit_sub if which == "sub" else r.fit_ov
+                if view is None or not view.norm > 0:
+                    continue
+                be = view.block.be_ev
+                y = AR.shift_onto(be, AR.intensity(view.block, True, False), view.shift_ev, be) / view.norm
+                if marks is None and r.used:
+                    marks = view.marks
+                ax.plot(be, y, "-" if r.used else ":", color=colours[id(r)], lw=1.2, label=f"{r.tilt:g}°")
+            if marks:
+                ymax = max((ln.get_ydata().max() for ln in ax.lines), default=1.0)
+                for name, mbe, role in marks:
+                    ax.axvline(mbe, color=role_colour.get(role, "#6b7280"), lw=1.2, ls="--")
+                    ax.text(mbe, ymax, " " + name + " ", rotation=90, va="top", ha="right", fontsize=8,
+                            color=role_colour.get(role, "#6b7280"))
+                bes = [m[1] for m in marks]
+                ax.set_xlim(max(bes) + 3.5, min(bes) - 3.5)
+            else:
+                ax.invert_xaxis()
+            ax.set_xlabel("Binding energy (eV), aligned on the substrate state")
+            ax.set_ylabel("Intensity / stored area (1/eV)")
+            ax.set_title(title, fontsize=10)
+            ax.legend(title="tilt", fontsize=8, title_fontsize=8, loc="upper left")
+        fig.suptitle("Dashed lines mark the stored CasaXPS component positions (blue substrate, orange overlayer); peak "
+                     "shapes are not redrawn", fontsize=9, color=MUTED)
         fig.subplots_adjust(left=0.08, right=0.98, top=0.88, bottom=0.14, wspace=0.25)
 
     def _draw_fit(self, fig):

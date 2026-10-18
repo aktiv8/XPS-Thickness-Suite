@@ -12,7 +12,7 @@ Thickogram nomogram, Topofactor corrections for fibres and particles, and angle-
 |---|---|---|
 | **Calculator and simulation** | Strohmeier equation | The overlayer and substrate are two chemical states of the **same core level** (metal and oxide components of Al 2p, Cu LMM, Si 2p ...). Uses densities and IMFPs and draws a simulated spectrum. |
 | **Thickogram** | Cumpson's Thickogram, with optional Topofactor | The overlayer and substrate are **different peaks** (a Fe 2p overlayer on Si 2p). Uses RSFs and kinetic-energy scaling and draws the nomogram. The Topofactor corrects for **fibres and particles**. |
-| **ARXPS (tilt series)** | Ratio against 1/cos(theta) from a VAMAS tilt series | You measured the **same spot at several emission angles**. Reads VAMAS files, aligns the peaks, subtracts a Shirley background, fits the thickness from the slope and plots it against azimuth if the file has one. |
+| **ARXPS (tilt series)** | Ratio against 1/cos(theta) from a VAMAS tilt series | You measured the **same spot at several emission angles**. Reads VAMAS files and takes the substrate and overlayer areas either from windows with a Shirley background or from a **peak fit saved by CasaXPS**; fits the thickness from the slope and plots it against azimuth if the file has one. |
 | **Method / References** | | The full documentation, with typeset equations, inside the app. |
 
 ![The Thickogram tab with a cylinder Topofactor applied](docs/images/thickogram.png)
@@ -85,11 +85,12 @@ display skip themselves when they are not available.
 - `thickogram.py`, `thickogram_tab.py`: Cumpson's Thickogram (maths, nomogram, tab).
 - `topofactor.py`: the Topofactor correction.
 - `arxps.py`, `arxps_tab.py`: angle-resolved analysis (alignment, Shirley background, areas, fits; the tab).
+- `casa.py`: reader for CasaXPS peak fits stored in VAMAS comments (ported from eXPoSe SpectraDeck).
 - `vamas.py`: VAMAS reader and writer. `synthetic.py`: synthetic tilt series for tests and the sample file.
 - `spectrum_sim.py`: simulated spectra (numpy only).
 - `help_viewer.py`, `gui_common.py`: the in-app documentation viewer and shared GUI styling.
 - `docs/`: the documentation sources and the scripts that regenerate its figures, screenshots and preset tables.
-- `docs/sample/`: a synthetic VAMAS tilt series to try the ARXPS tab on.
+- `docs/sample/`: synthetic VAMAS tilt series (with and without a stored CasaXPS fit) to try the ARXPS tab on.
 - `legacy/thickogram_v1_3.py`: the original standalone Thickogram script, unmodified, for provenance.
 - `tests/`, `NOTICE`.
 

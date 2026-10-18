@@ -186,17 +186,35 @@ class ClaimsMatchTheCode(unittest.TestCase):
         self.assertEqual([r.tilt for r in res.rows if not r.used], [75.0])
         self.assertAlmostEqual(res.line[0], 0.0, delta=2 * res.line[2])
 
-    def test_the_sample_file_is_what_the_generator_writes(self):
+    def test_the_sample_files_are_what_the_generator_writes(self):
         import tempfile
         spec = importlib.util.spec_from_file_location("make_sample_data", os.path.join(DOCS, "make_sample_data.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        with tempfile.TemporaryDirectory() as d:
-            fresh = os.path.join(d, "s.vms")
-            import synthetic
-            synthetic.write_sample(fresh, d_nm=mod.TRUE_THICKNESS_NM)
-            with open(fresh, "rb") as a, open(mod.SAMPLE, "rb") as b:
-                self.assertEqual(a.read(), b.read(), "docs/sample is stale: run  python docs/make_sample_data.py")
+        import synthetic
+        for fitted, committed in ((False, mod.SAMPLE), (True, mod.SAMPLE_FITTED)):
+            with tempfile.TemporaryDirectory() as d:
+                fresh = os.path.join(d, "s.vms")
+                synthetic.write_sample(fresh, fitted=fitted, d_nm=mod.TRUE_THICKNESS_NM)
+                with open(fresh, "rb") as a, open(committed, "rb") as b:
+                    self.assertEqual(a.read(), b.read(), "docs/sample is stale: run  python docs/make_sample_data.py")
+
+    def test_fitted_components_worked_example(self):
+        sample = os.path.join(DOCS, "sample", "si-native-oxide-arxps-fitted.vms")
+        sub, ov = A.SUBSTRATES["Si (metal/elemental)"], A.OVERLAYERS["SiO2"]
+        n = lambda c: A.volume_density(c.density_g_cm3, c.molar_mass_g_mol, c.atoms_per_formula)   # noqa: E731
+        rinf = ov.rsf * n(ov) * ov.imfp_nm / (sub.rsf * n(sub) * sub.imfp_nm)
+        series = VM.read(sample).series("Si2p Scan", "exp1")[None]
+        fits = AR.read_fits(series)
+        roles = AR.auto_roles(fits)
+        names = AR.state_names(fits)
+        res = AR.analyse_fitted_states(series, roles, ov.imfp_nm, rinf, fits=fits)
+        guide = _read("user-guide.md")
+        self.assertIn(f"**{res.d_nm:.2f} nm** after", guide)
+        self.assertAlmostEqual(res.d_nm, 1.5, delta=0.005)
+        by_role = {role: names[k] for k, role in roles.items()}
+        self.assertEqual(by_role, {AR.SUBSTRATE: "Si El", AR.OVERLAYER: "Si Ox"})
+        self.assertIn("makes Si El the substrate and Si Ox the overlayer", guide)
 
     def test_table_1_and_the_constants_in_methods(self):
         methods = _read("methods.md")

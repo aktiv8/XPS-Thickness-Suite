@@ -18,6 +18,15 @@ Topofactors (topofactor.py, the sample-shape controls of the Thickogram tab)
     the thin-film limits (2/pi, 0.50, 0.57), the constant averages (0.79, 0.67, 0.71), Eq. (6) and the shape
     parameters of its Table 1 are taken from that paper; the implementation is original.
 
+ARXPS tab (arxps.py, arxps_tab.py, vamas.py, casa.py, synthetic.py)
+  - Methods: angle-resolved XPS as in P. J. Cumpson, J. Electron Spectrosc. Relat. Phenom. 73, 25 (1995) and ISO 14701;
+    Shirley background: D. A. Shirley, Phys. Rev. B 5, 4709 (1972); VAMAS format: W. A. Dench, L. B. Hazell and
+    M. P. Seah, Surf. Interface Anal. 13, 63 (1988). The implementation is original.
+  - casa.py (CasaXPS peak fits stored in VAMAS comments) is a trimmed port of the comment parser of eXPoSe SpectraDeck
+    (casafit.py and quant.py), https://github.com/aktiv8/eXPoSe-Spectra-Deck, written by the repository owner. That
+    project carries no licence file; only the parser is used here, none of its line-shape tables. CasaXPS is a product
+    of Casa Software Ltd.
+
 Strohmeier calculator and presets
   - Equation: B. R. Strohmeier, Surf. Interface Anal. 15, 51-56 (1990); HarwellXPS Technical Note #1.
   - Al / Al2O3 presets: Strohmeier (1990). Cu oxide/hydroxide presets: M. C. Biesinger, Surf. Interface Anal. 49,

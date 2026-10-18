@@ -275,7 +275,8 @@ Two cross-checks are shown with it:
 
 ### Peak areas
 
-The areas come from the spectra themselves, with no fitting of line shapes:
+By default the areas come from the spectra themselves, with no fitting of line shapes. (The alternative, using a
+peak fit you made in CasaXPS, is described [below](#peak-areas-from-fitted-components).)
 
 1. **Alignment.** Charging and the flood gun move the peaks by a few tenths of an electronvolt between angles. Each
    spectrum is shifted to match the previous (already aligned) one by minimising the squared difference between the
@@ -299,11 +300,48 @@ Counts are divided by scans times dwell time (the K-Alpha stores raw counts summ
 transmission function of the file. Both cancel for two states of one peak but matter when two different peaks are
 compared.
 
+### Peak areas from fitted components
+
+If you have already fitted the spectra in CasaXPS [17] and saved the file as VAMAS, the tab can use that fit instead of
+integrating windows. CasaXPS stores the fit in each block's comment lines: for every component its name, line shape,
+area, width, position and an INDEX that links components belonging together, such as the two spin-orbit partners of a
+doublet. The tab reads these lines with a parser ported from the author's eXPoSe SpectraDeck project [18].
+
+- **Areas are used as stored.** They are counts per second times eV as CasaXPS computed them. Nothing is re-integrated,
+  no peak shape is redrawn and no background is recomputed, so the result is exactly what your fit says.
+- **States.** Components that share an INDEX form one chemical state and their areas add up; a component with no
+  shared INDEX is a state on its own. Sensitivity factors of single components are never used (a linked doublet partner
+  often stores zero).
+- **Which state is the substrate.** The tab compares each state's share of the total fitted area at the lowest and
+  the highest angle:
+
+```math
+\Delta_s = \frac{A_s(\theta_{max})}{\sum_j A_j(\theta_{max})} - \frac{A_s(\theta_{min})}{\sum_j A_j(\theta_{min})}
+```
+
+  A state whose share falls by more than 0.02 is taken as substrate, one whose share rises by more than 0.02 as
+  overlayer, and one that hardly moves is left unassigned. This works whichever state is the larger one. Every
+  assignment can be changed in the Components list; several states can belong to the overlayer, for example the
+  sub-oxides of silicon.
+- **Ratios.** With $A_{sub}$ and $A_{ov}$ the sums of the assigned areas at one angle, $R_i = A_{ov}/A_{sub}$ goes into
+  the equations above exactly as a ratio of integrated windows does, so the line fit, the intercept check and the
+  azimuth handling are the same.
+- **Two different peaks.** The substrate states are taken from one fitted region and the overlayer states from another,
+  matched by tilt. The stored areas are raw counts, so with *Transmission-correct* each component area is divided by the
+  transmission function of its block at the kinetic energy of that component; the sensitivity factors are filled in
+  from the fit and can be edited. For two states of one peak the correction cancels to within about 1 percent.
+- **Charge correction.** A `Calib` line in the comments, which CasaXPS writes when you shift the energy scale, changes
+  the displayed binding energies but not the areas, so it does not change the thickness.
+
+Because the fit already separates overlapping components, this route does not suffer from the window-split limit
+below. The thickness is only as good as the fit, so check it in CasaXPS: a poorly constrained fit gives poorly
+constrained areas.
+
 ### Limits
 
 - **Overlapping states.** A window split cannot separate peaks that are less than about 2 eV apart or that merge,
-  as the oxide and substrate components of Ga 3d on an oxidised GaAs wafer do. The tab warns; peak fitting would be needed and is not
-  implemented.
+  as the oxide and substrate components of Ga 3d on an oxidised GaAs wafer do. The tab warns. The tab does not fit peaks
+  itself, but it can use a fit made in CasaXPS (see above), which does not have this limit.
 - **Grazing angles.** Above about 70 degrees elastic scattering, roughness and surface contamination make the simple
   exponential unreliable, and the effective attenuation length differs from the IMFP [13]. Those angles are drawn
   but excluded from the fit (the limit is editable).
@@ -330,7 +368,9 @@ The tab reads VAMAS files (ISO 14976, the format described in [16]) with experim
 axis, which is what the Thermo K-Alpha writes. Unspecified values are stored as 1e37 and are treated as missing. The
 file does not say what its experimental variables mean, so the tab lets you choose where the tilt and the azimuth come
 from; it defaults to the first experimental variable for the tilt, which is where the K-Alpha stores it. Binding
-energy is taken as the photon energy minus the kinetic energy.
+energy is taken as the photon energy minus the kinetic energy. Files saved from CasaXPS keep the fit in the block
+comments, which the tab reads as described under peak areas from fitted components; positions in those lines are
+kinetic energies.
 
 ## Spectrum simulation
 

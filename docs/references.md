@@ -53,9 +53,13 @@ only where they were checked against the paper itself or a bibliographic record.
 16. W. A. Dench, L. B. Hazell and M. P. Seah, VAMAS surface chemical analysis standard data transfer format with
     skeleton decoding programs, *Surf. Interface Anal.* **13**, 63-122 (1988). DOI
     [10.1002/sia.740130202](https://doi.org/10.1002/sia.740130202).
+17. CasaXPS, Casa Software Ltd, https://www.casaxps.com. The program that fits peaks and saves the fit in the block
+    comments of a VAMAS file.
+18. aktiv8, eXPoSe SpectraDeck, https://github.com/aktiv8/eXPoSe-Spectra-Deck. The comment parser for CasaXPS fits in
+    `casa.py` is ported from it.
 
 ## Citing
 
 If you use the Topofactor correction in published work, please cite the paper by Shard and co-workers [4] and the
 Thickogram paper by Cumpson [3]. For the Strohmeier calculator cite [1], and for the Cu presets [5]. For the
-angle-resolved analysis see [12] and [14].
+angle-resolved analysis see [12] and [14]; for fits taken from CasaXPS see [17].
