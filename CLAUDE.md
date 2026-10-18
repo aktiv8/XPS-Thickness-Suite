@@ -4,7 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Tkinter app (`app.py`; the thickness calculator is Python standard library only) that estimates oxide/hydroxide/nitride overlayer thickness from XPS peak areas using the Strohmeier equation (B. R. Strohmeier, *Surf. Interface Anal.* 1990, 15, 51; HarwellXPS Tech Note #1: https://subsite.harwellxps.uk/wp-content/uploads/2018/02/HarwellXPS_TechNote_01.pdf). `README.md` covers user-facing usage.
+**XPS Thickness Suite** (repo `aktiv8/XPS-Thickness-Suite`, renamed from `XPS-Thickness-Calculator`; local folder `C:\Users\david\Documents\XPS-Thickness-Suite`): one Tkinter window with a tab per overlayer-thickness method.
+
+- **Calculator & simulation** (`app.py`; the calculation is Python standard library only): oxide/hydroxide/nitride thickness from peak areas of the **same core level** using the Strohmeier equation (B. R. Strohmeier, *Surf. Interface Anal.* 1990, 15, 51; HarwellXPS Tech Note #1: https://subsite.harwellxps.uk/wp-content/uploads/2018/02/HarwellXPS_TechNote_01.pdf), plus the simulated spectrum.
+- **Thickogram** (`thickogram.py` maths, `thickogram_tab.py` GUI): Cumpson's method for an overlayer and a substrate from **different core levels** (P. J. Cumpson, *Surf. Interface Anal.* 2000, 29, 403), with the classic nomogram embedded. Integrated from the user's separate `aktiv8/Thickogram` repo, which stays untouched; `legacy/thickogram_v1_3.py` is its unmodified script.
+- `gui_common.py` holds the shared palette, `setup_style()` and `Tooltip` so `app.py` and the tab modules don't import each other. `README.md` covers user-facing usage; `NOTICE` has the attribution.
+
+The repo is **public** (the user chose to leave it public although the code derived from Prof. Jong Wan Lee's GlowScript program has no known licence — hence the NOTICE). Don't remove the attribution.
 
 ## Commands
 
@@ -12,7 +18,7 @@ Tkinter app (`app.py`; the thickness calculator is Python standard library only)
 python app.py                                                  # launch the Tk GUI (blocks until closed)
 python -c "import py_compile; py_compile.compile('app.py', doraise=True)"   # syntax check without opening a window
 python -m unittest discover -s tests -v                        # run all tests (no display; numpy tests skip if numpy is missing)
-pip install numpy matplotlib                                   # optional: enables the "Simulated spectrum" pane
+pip install numpy matplotlib                                   # optional: enables the "Simulated spectrum" pane and the Thickogram tab
 python -m unittest tests.test_regression.BiesingerAlSpreadsheet   # a single test class
 ```
 
@@ -49,6 +55,18 @@ Optional (numpy + matplotlib; `app.py` guards the import and sets `HAVE_PLOT`, a
 - `CORE_LEVEL_MODEL` (spin-orbit splitting, branching ratio, default FWHM, Lorentzian mix) holds **typical literature values from general knowledge, not from the user's files**; FWHM is editable in the tab. The preset BE is taken as the lower-BE j-component (2p3/2, 3d5/2, 4f7/2) with the partner at +splitting. `model_for()` returns None for Auger presets (`Cu LMM`, `Zn LMM`), which are deliberately not simulated; a test enforces that every preset with a BE has a model and every Auger preset has none.
 - Not modelled: shake-up satellites (CuO, Cu(OH)₂), asymmetric metal tails, plasmon/loss features, Auger lines. **The figure must say so** (user requirement): `ignored_features()` returns the note printed under the plot and, for Cu 2p with CuO/Cu(OH)₂, a hatched "Cu(II) shake-up satellite region (not simulated)" band; `CoreLevelModel.ignored_note` holds the per-level text (Cu 2p quotes Biesinger's main/satellite ratios 1.89 CuO, 1.57 Cu(OH)₂ ⇒ satellites ≈ 35–39% of the Cu(II) area, so the drawn Cu(II) main peak is overstated). Note for thickness inputs: with Cu 2p3/2 the Cu(II) area should include the satellite. The band position (main + 5.5 … + 11.5 eV, i.e. ~939–946 eV) is an approximation consistent with the satellite components scattered through Biesinger's Table 4 text (~940–945 eV); that table's layout is scrambled in the PDF text and the PDF can't be rendered here, so exact satellite BEs/areas were not read. Background is a self-consistent Shirley step (15% of peak height). The default window clips a little Lorentzian tail (≤ ~3% of area), which the tests allow for.
 - A user spectrum is loaded as 2-column text/CSV (BE, intensity; headers skipped) and min–max scaled to the simulation height, so it is a shape comparison, not a quantitative overlay.
+
+## Thickogram tab (`thickogram.py`, `thickogram_tab.py`)
+
+`thickogram.py` is pure numpy/math (no Tk, no pyplot) so it is unit-tested directly (`tests/test_thickogram.py`); `thickogram_tab.py` is a `ttk.Frame` (Inputs + Calculation cards on the left, embedded nomogram on the right) that `App._build_thickogram_tab()` places in the notebook. `HAVE_THICKOGRAM` guards the import: without numpy/matplotlib the tab shows an install hint.
+
+- Equation: `ln(A/2) − (B^0.75 − 0.5)x − ln sinh(x/2) = 0`, `x = t/(L cosθ)`, `A = Io/(Is·So/Ss)`, `B = KEo/KEs` with `KE = source − BE`. f is strictly decreasing from +∞ to −∞, so there is always exactly one root; `solve_x` brackets and bisects (relative tolerance, so tiny roots are precise) and raises `ValueError` for non-positive/non-finite A or B. **At B = 1 it is exactly `x = ln(1 + A)` = the Strohmeier equation** — a test cross-checks it against `strohmeier_thickness()`.
+- **Angle convention differs from the Calculator**: Thickogram θ is from the surface *normal* (`cos`, 0 = normal emission); the Calculator's θ is from the *surface* (`sin`, 90 = normal). Convert with `normal_from_surface` / `surface_from_normal`; the tab shows the live conversion and "Copy from Calculator" applies it. Never mix them silently.
+- The original script's "redline plots correctly" to-do was a real bug: the red line must run from `(0, ln(A/2))` to `X = 2·x_B` (`x_B = (4.2 − B)/0.6`), not to the thickness position; `solution_line()` has the fix and a test checks that the line meets the green curve at `X = 2x`. The nomogram constants (`AYP`, `AXD`, `BX`, 4.2, 0.6) and drawing code are kept verbatim from the original.
+- Parity with the original is tested with golden `(A, B, x)` values produced by the original, unmodified solver (`GOLDEN` in the test file). `legacy/thickogram_v1_3.py` is pinned with `.gitattributes` (`-text`) so git does not normalise its CRLF line endings — keep it byte-identical to the original in `aktiv8/Thickogram`.
+- Presets only prefill binding energy (+ λ for the overlayer); presets carry no real RSFs, so So/Ss and the peak areas are always typed. `Copy from Calculator` does not copy areas (the Calculator's areas are same-core-level components, a different meaning).
+- The matplotlib lessons in "GUI layout" above (bind `<Configure>` with `add="+"`, toolbar width, redraw on resize) apply here too; the nomogram has no ticks so fractional figure margins are fine.
+- `tests/test_gui_smoke.py` builds the real window and drives this tab; it skips itself when there is no display.
 
 ## Git
 

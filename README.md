@@ -1,23 +1,29 @@
-# XPS Overlayer Thickness Calculator
+# XPS Thickness Suite
 
-A small Tkinter GUI implementing the **Strohmeier equation** for estimating
-oxide/hydroxide/nitride overlayer thickness from a single XPS spectrum, as
-described in HarwellXPS Technical Note #1:
-https://subsite.harwellxps.uk/wp-content/uploads/2018/02/HarwellXPS_TechNote_01.pdf
-(original method: B. R. Strohmeier, *Surf. Interface Anal.*, 1990, **15**, 51).
+Tkinter tools for estimating the thickness of thin overlayers (oxides, hydroxides,
+nitrides, passivation layers) from XPS peak areas, in one window with one tab per method:
+
+| Tab | Method | Use it when |
+|---|---|---|
+| **Calculator & simulation** | Strohmeier equation (B. R. Strohmeier, *Surf. Interface Anal.* 1990, **15**, 51; [HarwellXPS Tech Note #1](https://subsite.harwellxps.uk/wp-content/uploads/2018/02/HarwellXPS_TechNote_01.pdf)) | The overlayer and the substrate are two chemical states of the **same core level** (metal vs. oxide components of Al 2p, Cu LMM, Si 2p ...). Uses densities and IMFPs; includes a simulated spectrum. |
+| **Thickogram (different core levels)** | Cumpson's thickogram (P. J. Cumpson, *Surf. Interface Anal.* 2000, **29**, 403) | The overlayer and the substrate are **different peaks** (e.g. a Fe 2p overlayer on Si 2p). Uses RSFs and kinetic-energy scaling; draws the classic nomogram. |
+| **Method / References** | | Equations, assumptions and caveats for both. |
+
+For equal kinetic energies the thickogram reduces exactly to the Strohmeier equation, and the tests check that.
 
 ## Running it
 
 The thickness calculator needs no third-party packages (only the Python
 standard library / Tkinter, which ships with standard Windows Python installs).
-The optional **Simulated spectrum** pane needs numpy and matplotlib:
+The **Simulated spectrum** pane and the **Thickogram** tab need numpy and matplotlib
+(without them those parts show an install hint and the Calculator still works):
 
 ```bash
 pip install numpy matplotlib   # optional
 python app.py
 ```
 
-## What it does
+## Calculator tab: what it does
 
 - Pick a **substrate** (Cu, Al, Si, or custom) and up to 4 **overlayer**
   components (CuO, Cu2O, Cu(OH)2, Al2O3, SiO2, Si3N4, SiON, or custom) —
@@ -93,19 +99,56 @@ Not included: ZnS, diamond and graphite (see CLAUDE.md for why).
 estimates): the Avantage file's values, Biesinger's Cu oxide gaps, and four user-supplied
 additions (InP 1.27, GaP 2.25, CdTe 1.44, PbS 0.37 eV). Existing entries are never overwritten.
 
+## Thickogram tab
+
+Cumpson's method for an overlayer and a substrate measured from **different core levels**.
+Enter the two binding energies, peak areas and RSFs, the overlayer's attenuation length λ,
+the take-off angle and the X-ray source energy; the tab solves for the thickness and marks it
+on the thickogram (red line from the intensity-ratio scale through the energy-ratio scale; its
+crossing with the green curve is the answer). The nomogram is the original one, embedded
+(zoom, pan, save as PNG from its toolbar).
+
+- With x = t/(λ cos θ): `A = Io/(Is·Ro) = 2·exp((B^0.75 − 0.5)x)·sinh(x/2)`, `Ro = So/Ss`,
+  `B = KEo/KEs`, `t = x·λ·cos θ`.
+- **Angle convention:** this tab follows Cumpson (θ from the surface *normal*, 0 = normal
+  emission); the Calculator tab uses θ from the *surface* (90 = normal). The tab shows the
+  conversion live and **Copy from Calculator** applies it (and copies the binding energies and λ;
+  peak areas and RSFs are not copied).
+- **Load example** fills demo numbers; the optional preset dropdowns fill binding energy and λ
+  from the Calculator's reference table (an IMFP is ~10 % longer than an attenuation length).
+- The printed scales cover B = 0.4–3.0 and x = 0.1–6; outside that the answer is still
+  calculated, with a warning that the red line leaves the printed scales.
+- Fixed relative to the original script: the red construction line now ends on the B scale
+  (the original ended it at the thickness position, its own "redline plots correctly" to-do),
+  inputs are validated, the solver cannot hang, and the plot is embedded instead of opening a
+  separate pyplot window.
+
 ## Tests
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-No display needed; the numpy-based spectrum tests skip themselves if numpy is missing. `tests/test_regression.py` checks published numbers from
-the three papers above and Biesinger's Al spreadsheet (65/35 → 35.8 Å,
-23/77 → 9.7 Å, 85/15 → 61.2 Å), plus a few properties of the equation.
+`tests/test_regression.py` checks published numbers from the papers above and Biesinger's Al
+spreadsheet (65/35 → 35.8 Å, 23/77 → 9.7 Å, 85/15 → 61.2 Å); `test_thickogram.py` checks the
+thickogram solver against the original script's results, the B = 1 equivalence with the
+Strohmeier equation and the red-line geometry; `test_spectrum_sim.py` covers the spectrum
+simulation. The numpy tests skip themselves if numpy is missing, and `test_gui_smoke.py` (drives
+the real window) skips itself when no display is available.
 
 ## Files
 
-- `app.py` — the application (calculator, presets, GUI).
+- `app.py` — the application window, the Calculator tab, presets and the Strohmeier calculation.
+- `gui_common.py` — shared GUI palette, ttk theme/styles and tooltips.
 - `spectrum_sim.py` — simulated-spectrum maths (numpy only, no GUI).
-- `tests/test_regression.py` — regression tests against published numbers.
-- `tests/test_spectrum_sim.py` — tests for the spectrum simulation.
+- `thickogram.py` — thickogram maths and nomogram drawing (numpy only, no Tk).
+- `thickogram_tab.py` — the Thickogram tab.
+- `legacy/thickogram_v1_3.py` — the original standalone Thickogram script, unmodified, for provenance.
+- `tests/` — regression, spectrum, thickogram and GUI smoke tests.
+- `NOTICE` — attribution and licensing notes.
+
+## Credits
+
+Thickogram: Peter J. Cumpson, *Surf. Interface Anal.* **29**, 403–406 (2000); the program is a
+Python/Tk conversion of the GlowScript program by Prof. Jong Wan Lee (Hallym University), via
+the standalone `aktiv8/Thickogram` repository. See `NOTICE`.

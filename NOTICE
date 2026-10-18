@@ -1,0 +1,22 @@
+XPS Thickness Suite - attribution and licensing notes
+=====================================================
+
+Thickogram (thickogram.py, thickogram_tab.py, legacy/thickogram_v1_3.py)
+  - Method: Peter J. Cumpson, "The Thickogram: a method for easy film thickness measurement in XPS",
+    Surf. Interface Anal. 29, 403-406 (2000).
+  - The nomogram code derives from the GlowScript (WebVPython) program written by Prof. Jong Wan Lee,
+    Hallym University, School of Nano Convergence Technology, Korea
+    (https://www.glowscript.org/#/user/jwsslee/folder/Private/program/thickogram), converted to Python/Tkinter
+    in the aktiv8/Thickogram repository (https://github.com/aktiv8/Thickogram).
+  - LICENCE NOTE: the licence of the original GlowScript program is not known to the maintainer of this
+    repository, and the aktiv8/Thickogram repository carries no licence file. The derived code is included here
+    with attribution. If you are the author and have concerns, please contact the repository owner.
+
+Strohmeier calculator and presets
+  - Equation: B. R. Strohmeier, Surf. Interface Anal. 15, 51-56 (1990); HarwellXPS Technical Note #1.
+  - Al / Al2O3 presets: Strohmeier (1990). Cu oxide/hydroxide presets: M. C. Biesinger, Surf. Interface Anal. 49,
+    1325 (2017). W / WO3 presets: T. A. Carlson and G. E. McGuire, J. Electron Spectrosc. Relat. Phenom. 1, 161
+    (1972/73). Al oxide/hydroxide cross-check: M. C. Biesinger's thickness spreadsheet (Surface Science Western, 2008).
+  - Densities and band gaps for Si, SiO2, Si3N4, Ti, TiO2 and several others come from the Thermo Avantage
+    Densities.txt file supplied by the repository owner. Other densities are standard handbook values, and the
+    IMFPs marked "computed" use the TPP-2M formula (Tanuma, Powell and Penn, Surf. Interface Anal. 21, 165 (1994)).
