@@ -84,6 +84,13 @@ try:
 except Exception:
     HAVE_ARXPS = False
 
+# The depth-profile tab (trend plot, stratification, layers, regularisation), same optional packages.
+try:
+    from depth_tab import DepthTab
+    HAVE_DEPTH = HAVE_PLOT
+except Exception:
+    HAVE_DEPTH = False
+
 
 # ---------------------------------------------------------------------------
 # Reference data
@@ -697,10 +704,12 @@ class App(tk.Tk):
         self.calc_tab = ttk.Frame(nb)
         self.thick_tab = ttk.Frame(nb)
         self.arxps_tab = ttk.Frame(nb)
+        self.depth_tab = ttk.Frame(nb)
         self.help_tab = ttk.Frame(nb)
         nb.add(self.calc_tab, text="Calculator & simulation")
         nb.add(self.thick_tab, text="Thickogram (different core levels)")
         nb.add(self.arxps_tab, text="ARXPS (tilt series)")
+        nb.add(self.depth_tab, text="Depth profile (ARXPS)")
         nb.add(self.help_tab, text="Method / References")
 
         self.history = []  # list of dict rows for CSV export
@@ -710,6 +719,7 @@ class App(tk.Tk):
         self._build_calc_tab()
         self._build_thickogram_tab()
         self._build_arxps_tab()
+        self._build_depth_tab()
         self._build_help_tab()
         self.after(150, self._place_sash)
 
@@ -1265,6 +1275,22 @@ class App(tk.Tk):
             return
         self.arxps = ARXPSTab(self.arxps_tab, self, SUBSTRATES, OVERLAYERS, volume_density, compact=self.compact)
         self.arxps.pack(fill="both", expand=True, padx=8)
+
+    def _build_depth_tab(self):
+        """Depth distribution of several species from a tilt series. Needs numpy + matplotlib."""
+        if not HAVE_DEPTH:
+            ttk.Label(self.depth_tab, justify="left", padding=20,
+                      text="The Depth profile tab needs numpy and matplotlib:\n\n"
+                           "    pip install numpy matplotlib\n\n"
+                           "then restart the app. The Calculator tab works without them.").pack(anchor="nw")
+            return
+
+        def lam_default(ke_ev):
+            """A starting attenuation length: TPP-2M for an oxide-like matrix (SiO2). Replace it for your material."""
+            return tpp2m_imfp_nm(ke_ev, 2.196, 60.08, 16, 8.9)
+
+        self.depth = DepthTab(self.depth_tab, self, lam_default, compact=self.compact)
+        self.depth.pack(fill="both", expand=True, padx=8)
 
     def _build_help_tab(self):
         """The documentation tab. The rich viewer (docs/*.md with typeset equations) is built the first time the tab

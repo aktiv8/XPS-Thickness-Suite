@@ -5,7 +5,8 @@ square brackets, such as [3], refer to the [reference list](references.md#refere
 
 Contents: [Overview](#overview), [Strohmeier equation](#strohmeier-equation-calculator-tab),
 [Thickogram](#thickogram-thickogram-tab), [Topofactors](#topofactors-fibres-and-particles),
-[Angle-resolved XPS](#angle-resolved-xps-arxps-tab), [Spectrum simulation](#spectrum-simulation),
+[Angle-resolved XPS](#angle-resolved-xps-arxps-tab), [Depth profiles](#depth-profiles-depth-profile-tab),
+[Spectrum simulation](#spectrum-simulation),
 [IMFPs from TPP-2M](#imfps-from-tpp-2m).
 
 ## Overview
@@ -18,6 +19,7 @@ overlayer and substrate signals separable by peak fitting. They differ in which 
 | Strohmeier (Calculator tab) | Two chemical states of the same core level, for example metallic Al and Al oxide in Al 2p | Densities, IMFPs | Flat samples, thickness up to about 3 IMFPs |
 | Thickogram (Thickogram tab) | Two different peaks, for example Fe 2p overlayer and Si 2p substrate | RSFs, kinetic energies, attenuation length | Flat samples |
 | Topofactor (Thickogram tab) | Correction applied to the Thickogram result | Sample shape | Fibres and particles much larger than the attenuation length |
+| Depth profile (Depth profile tab) | Several species followed against emission angle | Attenuation lengths, a tilt series | Flat samples, angles up to about 70 degrees |
 | ARXPS (ARXPS tab) | The same signals as above, measured at several emission angles from a VAMAS tilt series | Presets or RSFs, lambda, a tilt series | Flat samples, emission angles up to about 70 degrees |
 
 ## Strohmeier equation (Calculator tab)
@@ -371,6 +373,52 @@ from; it defaults to the first experimental variable for the tilt, which is wher
 energy is taken as the photon energy minus the kinetic energy. Files saved from CasaXPS keep the fit in the block
 comments, which the tab reads as described under peak areas from fitted components; positions in those lines are
 kinetic energies.
+
+## Depth profiles (Depth profile tab)
+
+The ARXPS tab answers one question, the thickness of one overlayer. The Depth profile tab asks where **several species**
+sit in depth. It follows the ideas of the NPL ARCtick package [12], implemented independently from the published physics.
+
+### Species
+
+A *species* is anything whose intensity can be followed against emission angle. Two sources are offered:
+
+- **Fitted states.** Every chemical state of every CasaXPS fit stored in the VAMAS file (see
+  [peak areas from fitted components](#peak-areas-from-fitted-components)). The stored areas are used as they are, and
+  each component area is divided by the block's transmission function at its kinetic energy when *Transmission-correct*
+  is ticked.
+- **Whole regions.** Each region integrated with a Shirley background over the part of the spectrum that holds the
+  peaks (the stretch where the smoothed spectrum stays above a tenth of its range, plus 1.5 eV each side), each spectrum
+  aligned to the previous one. A Shirley background over a wide region with a long loss tail can fail to converge, so the
+  Shirley routine now solves for the background directly and falls back to a straight line when no sensible solution exists.
+
+Every species has an attenuation length $\lambda$ for its photoelectrons. The starting value is a TPP-2M estimate for an
+oxide-like matrix, which is only a guide: replace it for your material. Counting statistics give each area an uncertainty,
+$\sigma = \Delta E\,\sqrt{\sum_i N_i}\,/\,(n_{scans}\,t_{dwell})$ over the integrated points.
+
+### Surrey Trend Plot
+
+For a thin layer of a species at depth $z$ the intensity falls with angle as
+
+```math
+I(\theta) = I(0)\,\exp\left(-\frac{z}{\lambda\cos\theta}\right),\qquad \ln I = \ln I(0) - \frac{z}{\lambda}\,\sec\theta
+```
+
+so a plot of $\ln I$ against $\sec\theta$ is a straight line whose slope is $-z/\lambda$. The Surrey Trend Plot, suggested by
+J. Castle and J. Watts of the University of Surrey and included in ARCtick, plots exactly this for all species at once. It is
+exploratory, not a depth profile:
+
+- **Parallel lines** mean species that fall off together. If their attenuation lengths are similar they may be
+  distributed together in depth. The table lists, for each species, the others whose slope differs by less than twice the
+  combined standard error and whose kinetic energy is within a factor of 0.7 to 1.4.
+- **The scatter** of the points about each line (the rms residual of $\ln I$) shows the precision of the measurements.
+- **The slope** gives an apparent depth $z_{app} = -\lambda\times\mathrm{slope}$. It is exact for a thin layer; for a species
+  spread over a thickness it is a weighted mean depth, and a line that curves says the species is not in a single thin layer
+  (an overlayer, whose intensity is $1 - e^{-x}$, curves upwards).
+- The comparison is less useful when kinetic energies, and hence attenuation lengths, differ a lot. The table says so.
+
+Curves can be normalised to their first angle so that parallel lines lie on top of each other. Angles above the maximum
+angle are drawn as open symbols and left out of the fits.
 
 ## Spectrum simulation
 

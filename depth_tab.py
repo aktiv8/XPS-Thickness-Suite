@@ -1,0 +1,418 @@
+"""
+The "Depth profile (ARXPS)" tab of the XPS Thickness Suite: what a tilt series says about the DEPTH distribution of
+several species at once. Panels (a notebook on the right): the Surrey Trend Plot, and (added in later steps)
+Stratification, Layers and Profile.
+
+Maths in depthprofile.py, VAMAS reading in vamas.py, CasaXPS fits in casa.py; this module is the Tk/matplotlib glue
+and needs numpy + matplotlib (app.py shows an install hint instead if they are missing). Inspired by the NPL ARCtick
+package (P. J. Cumpson, 1995) but an independent implementation.
+
+Angle convention: theta is from the surface NORMAL (0 = normal emission) and equals the stage tilt plus an offset.
+"""
+import math
+import os
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+
+import numpy as np
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+
+import arxps as AR
+import depthprofile as DP
+import vamas as VM
+from gui_common import ACCENT, BADGE, CARD, MUTED, Tooltip, _to_float
+
+NO_AZIMUTH = "None (single azimuth)"
+SRC_FITS = "Fitted states (CasaXPS)"
+SRC_REGIONS = "Whole regions (Shirley)"
+# a colour-blind-safe cycle (Okabe and Ito) with a few extras
+PALETTE = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#F0E442", "#000000",
+           "#7F3C8D", "#11A579", "#3969AC", "#E73F74"]
+
+
+def _az_label(az):
+    return "-" if az is None else f"{az:g}"
+
+
+def _fmt(v, spec="{:.3f}", none="-"):
+    return none if v is None else spec.format(v)
+
+
+class DepthTab(ttk.Frame):
+    def __init__(self, parent, app, lam_default=None, compact=False):
+        super().__init__(parent)
+        self.app, self.compact = app, compact
+        self.lam_default = lam_default or (lambda ke: 2.0)
+        self.file = None
+        self.species = []                    # depthprofile.Species, as loaded
+        self.rows = []                       # per species: dict(use, lam, rsf) tk variables
+        self.v = {k: tk.StringVar() for k in ("angle_src", "azim_src", "azimuth", "offset", "max_angle", "source")}
+        self.v["offset"].set("0")
+        self.v["max_angle"].set(f"{DP.DEFAULT_MAX_ANGLE:g}")
+        self.v["source"].set(SRC_FITS)
+        self.transmission = tk.BooleanVar(value=True)
+        self.x_mode = tk.StringVar(value="sec")
+        self.normalise = tk.BooleanVar(value=True)
+        self.show_fits = tk.BooleanVar(value=True)
+        self.file_label = tk.StringVar(value="No file loaded")
+        self.status = tk.StringVar(value="Open a VAMAS tilt series (or use the one in the ARXPS tab).")
+        self._after = None
+
+        self.columnconfigure(0, weight=0)
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
+        left = ttk.Frame(self)
+        left.grid(row=0, column=0, sticky="ns", padx=(0, 8), pady=(8, 4))
+        left.rowconfigure(1, weight=1)
+        self._build_data(left).grid(row=0, column=0, sticky="ew")
+        self._build_species(left).grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        self._build_right().grid(row=0, column=1, sticky="nsew", pady=(8, 4))
+        self.bind("<Destroy>", lambda e: self._cancel_after() if e.widget is self else None)
+        self._draw()
+
+    def _cancel_after(self):
+        if self._after is not None:
+            try:
+                self.after_cancel(self._after)
+            except tk.TclError:
+                pass
+            self._after = None
+
+    # --- data card ------------------------------------------------------------------------------------
+    def _combo(self, parent, var, row, label, hint, values=(), width=24):
+        ttk.Label(parent, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=2)
+        c = ttk.Combobox(parent, textvariable=var, values=list(values), state="readonly", width=width)
+        c.grid(row=row, column=1, columnspan=3, sticky="w", padx=6, pady=2)
+        Tooltip(c, hint)
+        return c
+
+    def _entry(self, parent, key, row, label, hint, col=0, width=6):
+        ttk.Label(parent, text=label, style="Card.TLabel").grid(row=row, column=col, sticky="w", pady=2)
+        e = ttk.Entry(parent, textvariable=self.v[key], width=width)
+        e.grid(row=row, column=col + 1, sticky="w", padx=6, pady=2)
+        Tooltip(e, hint)
+        return e
+
+    def _build_data(self, parent):
+        card = ttk.LabelFrame(parent, text="  Data  ", style="Card.TLabelframe", padding=(8, 4, 8, 6))
+        top = ttk.Frame(card, style="Card.TFrame")
+        top.grid(row=0, column=0, columnspan=4, sticky="ew")
+        b1 = ttk.Button(top, text="Open VAMAS file…", command=self.open_file)
+        b1.pack(side="left")
+        b2 = ttk.Button(top, text="Use ARXPS tab's file", command=self.use_arxps_file)
+        b2.pack(side="left", padx=6)
+        Tooltip(b1, "Load a VAMAS (.vms) file with a tilt series: one block per region and tilt.")
+        Tooltip(b2, "Take the file that is already open on the ARXPS tab, with its angle settings.")
+        ttk.Label(card, textvariable=self.file_label, style="CardMuted.TLabel", wraplength=330, justify="left").grid(
+            row=1, column=0, columnspan=4, sticky="w", pady=(2, 4))
+        self.angle_cb = self._combo(card, self.v["angle_src"], 2, "Angle from:", "Where the tilt comes from (the "
+                                    "K-Alpha stores it in experimental variable 1).")
+        self._entry(card, "offset", 3, "Offset (°):", "Added to the tilt to give the emission angle from the surface "
+                    "normal.")
+        self._entry(card, "max_angle", 3, "Max angle (°):", "Angles above this are drawn but left out of fits: the "
+                    "simple exponential model fails at grazing emission.", col=2)
+        self.azim_cb = self._combo(card, self.v["azim_src"], 4, "Azimuth from:", "Optional: the field holding the "
+                                   "azimuth. One azimuth is analysed at a time.")
+        self.az_cb = self._combo(card, self.v["azimuth"], 5, "Azimuth:", "Which azimuth to analyse.", width=10)
+        self.az_cb.bind("<<ComboboxSelected>>", lambda e: self.reload())
+        self.src_cb = self._combo(card, self.v["source"], 6, "Species from:", "Fitted states: every chemical state of "
+                                  "the CasaXPS fits stored in the file. Whole regions: each region integrated with a "
+                                  "Shirley background (any file).", [SRC_FITS, SRC_REGIONS])
+        for cb in (self.angle_cb, self.azim_cb, self.src_cb):
+            cb.bind("<<ComboboxSelected>>", lambda e: self.reload())
+        ck = ttk.Checkbutton(card, text="Transmission-correct", variable=self.transmission, style="Card.TCheckbutton",
+                             command=self.reload)
+        ck.grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        Tooltip(ck, "Divide by the transmission function at each peak's kinetic energy so peaks at different energies "
+                    "can be compared.")
+        ttk.Button(card, text="Reload species", command=self.reload).grid(row=7, column=2, columnspan=2, sticky="e")
+        return card
+
+    # --- species card ---------------------------------------------------------------------------------
+    def _build_species(self, parent):
+        card = ttk.LabelFrame(parent, text="  Species  ", style="Card.TLabelframe", padding=(8, 4, 8, 6))
+        card.rowconfigure(1, weight=1)
+        card.columnconfigure(0, weight=1)
+        ttk.Label(card, textvariable=self.status, style="CardMuted.TLabel", wraplength=330, justify="left").grid(
+            row=0, column=0, columnspan=2, sticky="w")
+        holder = ttk.Frame(card, style="Card.TFrame")
+        holder.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
+        holder.rowconfigure(0, weight=1)
+        holder.columnconfigure(0, weight=1)
+        self.sp_canvas = tk.Canvas(holder, bg=CARD, highlightthickness=0, height=150 if self.compact else 220, width=340)
+        scroll = ttk.Scrollbar(holder, orient="vertical", command=self.sp_canvas.yview)
+        self.sp_canvas.configure(yscrollcommand=scroll.set)
+        self.sp_canvas.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.sp_frame = ttk.Frame(self.sp_canvas, style="Card.TFrame")
+        self.sp_canvas.create_window((0, 0), window=self.sp_frame, anchor="nw")
+        self.sp_frame.bind("<Configure>", lambda e: self.sp_canvas.configure(scrollregion=self.sp_canvas.bbox("all")))
+        return card
+
+    def _fill_species(self):
+        for w in self.sp_frame.winfo_children():
+            w.destroy()
+        self.rows = []
+        for c, text in enumerate(("Use", "Species", "λ (nm)", "RSF", "KE (eV)")):
+            ttk.Label(self.sp_frame, text=text, style="ColHead.TLabel").grid(row=0, column=c, padx=3, sticky="w")
+        for i, sp in enumerate(self.species, start=1):
+            use = tk.BooleanVar(value=True)
+            lam = tk.StringVar(value=f"{sp.lam_nm:.2f}")
+            rsf = tk.StringVar(value=f"{sp.rsf:g}")
+            ttk.Checkbutton(self.sp_frame, variable=use, style="Card.TCheckbutton", command=self.refresh).grid(
+                row=i, column=0, padx=3)
+            tk.Label(self.sp_frame, text="●", fg=PALETTE[(i - 1) % len(PALETTE)], bg=CARD).grid(row=i, column=1, sticky="w")
+            ttk.Label(self.sp_frame, text=sp.name, style="Card.TLabel").grid(row=i, column=1, sticky="w", padx=(16, 0))
+            for col, var, hint in ((2, lam, "Attenuation length of this species' photoelectrons (nm). The default is a "
+                                            "TPP-2M estimate for an oxide-like matrix: replace it with a value for your "
+                                            "material."),
+                                   (3, rsf, "Relative sensitivity factor (the fit's own RSF when it has one).")):
+                e = ttk.Entry(self.sp_frame, textvariable=var, width=6)
+                e.grid(row=i, column=col, padx=3, pady=1)
+                Tooltip(e, hint)
+                var.trace_add("write", lambda *a: self._schedule())
+            ttk.Label(self.sp_frame, text=_fmt(sp.ke_ev, "{:.0f}"), style="CardMuted.TLabel").grid(row=i, column=4, padx=3)
+            self.rows.append(dict(use=use, lam=lam, rsf=rsf))
+
+    # --- loading ------------------------------------------------------------------------------------------
+    def open_file(self):
+        path = filedialog.askopenfilename(title="Open a VAMAS tilt series",
+                                          filetypes=[("VAMAS files", "*.vms *.vamas"), ("All files", "*.*")])
+        if path:
+            self.load_file(path)
+
+    def use_arxps_file(self):
+        arx = getattr(self.app, "arxps", None)
+        if arx is None or arx.file is None:
+            messagebox.showinfo("No file", "Open a VAMAS file on the ARXPS tab first.")
+            return
+        self._set_file(arx.file, os.path.basename(arx.file.path or "file"))
+
+    def load_file(self, path):
+        try:
+            vf = VM.read(path)
+        except VM.VamasError as exc:
+            messagebox.showerror("Cannot read the file", str(exc))
+            return False
+        if not vf.blocks:
+            messagebox.showerror("Cannot read the file", "The file holds no spectra.")
+            return False
+        self._set_file(vf, os.path.basename(path))
+        return True
+
+    def _set_file(self, vf, name):
+        self.file = vf
+        self.file_label.set(f"{name}: {len(vf.blocks)} blocks, regions {', '.join(vf.regions())}")
+        angle, azim = vf.default_sources()
+        present = vf.sources_present()
+        labels = [VM.ANGLE_SOURCES[s] for s in present]
+        self.angle_cb.configure(values=labels or list(VM.ANGLE_SOURCES.values()))
+        self.azim_cb.configure(values=[NO_AZIMUTH] + labels)
+        self.v["angle_src"].set(VM.ANGLE_SOURCES[angle] if angle else "")
+        self.v["azim_src"].set(VM.ANGLE_SOURCES[azim] if azim and azim in present else NO_AZIMUTH)
+        has_fits = any(AR.fit_regions(self._series(r)) for r in self._spectral_regions() if self._series(r))
+        self.v["source"].set(SRC_FITS if has_fits else SRC_REGIONS)
+        self.reload()
+
+    def _key(self, label):
+        for key, text in VM.ANGLE_SOURCES.items():
+            if text == label:
+                return key
+        return None
+
+    def _spectral_regions(self):
+        names = self.file.regions() if self.file else []
+        return [n for n in names if "survey" not in n.lower()] or names
+
+    def _series(self, region):
+        """The blocks of a region at the chosen azimuth as [(tilt, block), ...] (empty if there is no angle)."""
+        angle_src = self._key(self.v["angle_src"].get())
+        if angle_src is None or not self.file:
+            return []
+        series = self.file.series(region, angle_src, self._key(self.v["azim_src"].get()))
+        if not series:
+            return []
+        want = self.v["azimuth"].get()
+        keys = sorted(series, key=lambda a: (a is not None, a if a is not None else 0.0))
+        self.az_cb.configure(values=[_az_label(k) for k in keys])
+        for k in keys:
+            if _az_label(k) == want:
+                return series[k]
+        self.v["azimuth"].set(_az_label(keys[0]))
+        return series[keys[0]]
+
+    def reload(self):
+        """(Re)build the species from the file and the current settings."""
+        if not self.file:
+            return
+        try:
+            offset = self._number("offset", "Offset")
+            tr = self.transmission.get()
+            species = []
+            for region in self._spectral_regions():
+                series = self._series(region)
+                if len(series) < 2:
+                    continue
+                if self.v["source"].get() == SRC_FITS:
+                    for name in AR.fit_regions(series):
+                        species += DP.species_from_fits(series, offset, tr, name)
+                else:
+                    species.append(DP.species_from_region(series, offset, True, tr))
+            if not species:
+                raise ValueError("No species found: " + ("none of the regions holds a CasaXPS fit (try Whole regions)"
+                                                         if self.v["source"].get() == SRC_FITS else
+                                                         "check the angle source (Data card)") + ".")
+        except ValueError as exc:
+            self.species, self.rows = [], []
+            self._fill_species()
+            self.status.set(str(exc))
+            self._draw()
+            return
+        for sp in species:
+            sp.lam_nm = float(self.lam_default(sp.ke_ev)) if sp.ke_ev else 2.0
+        self.species = species
+        self._fill_species()
+        self.status.set(f"{len(species)} species at {len(species[0].angles)} angles; set each λ for your material.")
+        self.refresh()
+
+    def _number(self, key, label):
+        x = _to_float(self.v[key].get())
+        if x is None or not math.isfinite(x):
+            raise ValueError(f"Please enter a number for '{label}'.")
+        return x
+
+    def _schedule(self):
+        if self._after is not None:
+            self.after_cancel(self._after)
+        self._after = self.after(250, self.refresh)
+
+    def active(self):
+        """The species currently ticked, with the typed λ and RSF applied."""
+        out = []
+        for sp, row in zip(self.species, self.rows):
+            if not row["use"].get():
+                continue
+            lam, rsf = _to_float(row["lam"].get()), _to_float(row["rsf"].get())
+            if lam and lam > 0:
+                sp.lam_nm = lam
+            if rsf and rsf > 0:
+                sp.rsf = rsf
+            out.append(sp)
+        return out
+
+    def refresh(self):
+        self._after = None
+        self._draw()
+
+    # --- right-hand side ------------------------------------------------------------------------------
+    def _build_right(self):
+        frame = ttk.Frame(self)
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+        nb = ttk.Notebook(frame, style="Sub.TNotebook")
+        nb.grid(row=0, column=0, sticky="nsew")
+        self.plot_nb = nb
+        self._build_trend_page(nb)
+        return frame
+
+    def _canvas(self, parent):
+        fig = Figure(figsize=(8, 5), dpi=100)
+        canvas = FigureCanvasTkAgg(fig, master=parent)
+        toolbar = NavigationToolbar2Tk(canvas, parent, pack_toolbar=False)
+        toolbar.configure(width=250)
+        for child in [toolbar] + list(toolbar.winfo_children()):
+            try:
+                child.configure(bg=CARD)
+            except tk.TclError:
+                pass
+        toolbar.pack(side="bottom", fill="x")
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        return fig, canvas
+
+    def _build_trend_page(self, nb):
+        page = ttk.Frame(nb, style="Card.TFrame", padding=4)
+        nb.add(page, text="Surrey Trend Plot")
+        bar = ttk.Frame(page, style="Card.TFrame")
+        bar.pack(side="top", fill="x")
+        for text, val in (("ln I against sec θ", "sec"), ("ln I against θ", "theta")):
+            ttk.Radiobutton(bar, text=text, value=val, variable=self.x_mode, style="Card.TRadiobutton",
+                            command=self._draw).pack(side="left", padx=(0, 10))
+        for text, var, tip in (("Normalise to the first angle", self.normalise,
+                                "Divide each curve by its value at the first angle, so parallel lines are easy to see."),
+                               ("Fit lines", self.show_fits, "Straight-line fit of ln I against sec θ for each species.")):
+            c = ttk.Checkbutton(bar, text=text, variable=var, style="Card.TCheckbutton", command=self._draw)
+            c.pack(side="left", padx=(0, 10))
+            Tooltip(c, tip)
+        lower = ttk.Frame(page, style="Card.TFrame")
+        lower.pack(side="bottom", fill="x", pady=(6, 0))
+        cols = ("sp", "ke", "slope", "se", "rms", "depth", "n", "similar", "note")
+        heads = ("Species", "KE (eV)", "Slope", "± se", "Scatter", "Depth (nm)", "Points", "Parallel to", "Note")
+        widths = (90, 60, 60, 60, 60, 75, 50, 130, 260)
+        self.trend_table = ttk.Treeview(lower, columns=cols, show="headings", height=4 if self.compact else 6)
+        for c, h, w in zip(cols, heads, widths):
+            self.trend_table.heading(c, text=h)
+            self.trend_table.column(c, width=w, anchor="w" if c in ("sp", "similar", "note") else "e",
+                                    stretch=(c == "note"))
+        self.trend_table.pack(fill="x")
+        self.trend_fig, self.trend_canvas = self._canvas(page)
+
+    # --- trend plot ---------------------------------------------------------------------------------------
+    def _draw(self):
+        fig = self.trend_fig
+        fig.clear()
+        species = self.active() if self.species else []
+        self.trend_table.delete(*self.trend_table.get_children())
+        if not species:
+            ax = fig.add_subplot(111)
+            ax.axis("off")
+            ax.text(0.5, 0.5, "Open a VAMAS tilt series: every species is drawn as ln(intensity) against angle.\n"
+                              "Species whose lines run parallel (and have similar attenuation lengths) may be "
+                              "distributed together.", ha="center", va="center", color=MUTED, fontsize=11)
+            self.trend_canvas.draw_idle()
+            return
+        try:
+            max_angle = self._number("max_angle", "Max angle")
+        except ValueError:
+            max_angle = DP.DEFAULT_MAX_ANGLE
+        rows = DP.trend_table(species, max_angle)
+        ax = fig.add_subplot(111)
+        use_sec = self.x_mode.get() == "sec"
+        for i, (sp, tr) in enumerate(zip(species, rows)):
+            colour = PALETTE[self.species.index(sp) % len(PALETTE)]
+            y = np.asarray(sp.intensity, dtype=float)
+            ok = y > 0
+            if self.normalise.get():
+                y = DP.normalised(sp)
+            x = sp.sec if use_sec else sp.angles
+            ly = np.log(np.where(y > 0, y, np.nan))
+            err = None
+            if sp.sigma is not None:
+                rel = np.where(sp.intensity > 0, sp.sigma / np.where(sp.intensity > 0, sp.intensity, 1.0), np.nan)
+                err = rel
+            inside = sp.angles <= max_angle
+            ax.errorbar(x[ok & inside], ly[ok & inside], yerr=None if err is None else err[ok & inside], fmt="o",
+                        color=colour, ms=5, capsize=2, label=sp.name)
+            if (~inside & ok).any():
+                ax.plot(x[ok & ~inside], ly[ok & ~inside], "o", mfc="none", color=colour, ms=5)
+            if self.show_fits.get() and tr.slope is not None:
+                xs = np.linspace(float(np.min(x[ok & inside])), float(np.max(x[ok & inside])), 20)
+                if use_sec:
+                    line = tr.intercept + tr.slope * xs
+                else:
+                    line = tr.intercept + tr.slope / np.cos(np.radians(xs))
+                if self.normalise.get():
+                    first = np.flatnonzero(sp.intensity > 0)[0]
+                    line = line - math.log(sp.intensity[first])
+                ax.plot(xs, line, "-", color=colour, lw=1)
+        ax.set_xlabel("sec θ  (1 / cos θ)" if use_sec else "Emission angle θ (°)")
+        ax.set_ylabel("ln( I / I at first angle )" if self.normalise.get() else "ln( I )  (I in counts/s·eV)")
+        ax.set_title("Surrey Trend Plot: parallel lines may mean species that are distributed together", fontsize=10)
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8, loc="best")
+        fig.subplots_adjust(left=0.09, right=0.98, top=0.92, bottom=0.12)
+        self.trend_canvas.draw_idle()
+        for r in rows:
+            self.trend_table.insert("", "end", values=(
+                r.name, _fmt(r.ke_ev, "{:.0f}"), _fmt(r.slope), _fmt(r.slope_se), _fmt(r.rms), _fmt(r.depth_nm, "{:.2f}"),
+                r.n, ", ".join(r.similar) or "-", r.note))

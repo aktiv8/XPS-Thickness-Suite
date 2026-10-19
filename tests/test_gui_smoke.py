@@ -26,8 +26,9 @@ import thickogram as T  # noqa: E402
 try:
     import thickogram_tab as TT
     import arxps_tab as AT
+    import depth_tab as DT
 except ImportError:
-    TT = AT = None
+    TT = AT = DT = None
 
 import synthetic as S  # noqa: E402
 import vamas as VM  # noqa: E402
@@ -42,13 +43,13 @@ def _make_app(testcase):
 
 @unittest.skipUnless(HAVE_DISPLAY and TT is not None, "needs a display and numpy + matplotlib")
 class ThickogramTabSmoke(unittest.TestCase):
-    def test_window_has_the_four_tabs_and_the_suite_title(self):
+    def test_window_has_the_five_tabs_and_the_suite_title(self):
         app = _make_app(self)
         self.assertEqual(app.title(), "XPS Thickness Suite")
         nb = app.nametowidget(app.calc_tab.winfo_parent())
         self.assertEqual([nb.tab(i, "text") for i in range(nb.index("end"))],
                          ["Calculator & simulation", "Thickogram (different core levels)", "ARXPS (tilt series)",
-                          "Method / References"])
+                          "Depth profile (ARXPS)", "Method / References"])
 
     def test_example_reproduces_the_library_result(self):
         app = _make_app(self)
@@ -463,14 +464,98 @@ class ARXPSTabSmoke(unittest.TestCase):
         self.assertEqual(tab.v["env_lo"].get(), "")
 
 
+@unittest.skipUnless(HAVE_DISPLAY and DT is not None, "needs a display and numpy + matplotlib")
+class DepthTabSmoke(unittest.TestCase):
+    """The depth-profile tab (Surrey Trend Plot) driven with synthetic VAMAS files."""
+
+    def _write(self, blocks):
+        import tempfile
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        path = os.path.join(d.name, "series.vms")
+        VM.write(path, blocks)
+        return path
+
+    def _tab(self, blocks):
+        app = _make_app(self)
+        tab = app.depth
+        self.assertTrue(tab.load_file(self._write(blocks)))
+        return app, tab
+
+    def _table(self, tab):
+        return {tab.trend_table.item(i, "values")[0]: tab.trend_table.item(i, "values")
+                for i in tab.trend_table.get_children()}
+
+    def test_empty_tab_shows_a_prompt(self):
+        app = _make_app(self)
+        self.assertEqual(app.depth.species, [])
+        self.assertEqual(len(app.depth.trend_table.get_children()), 0)
+
+    def test_a_fitted_file_gives_one_species_per_state_and_the_exact_trend(self):
+        app, tab = self._tab(S.two_state_series(d_nm=1.5, fitted=True))
+        self.assertEqual(tab.v["source"].get(), DT.SRC_FITS)
+        self.assertEqual([sp.name for sp in tab.species], ["Si El", "Si Ox"])
+        self.assertAlmostEqual(tab.species[0].lam_nm, 3.89, delta=0.05)          # TPP-2M default for an oxide-like matrix
+        rows = self._table(tab)
+        self.assertAlmostEqual(float(rows["Si El"][2]), -1.5 / tab.species[0].lam_nm, delta=0.003)
+        self.assertAlmostEqual(float(rows["Si El"][5]), 1.5, delta=0.01)         # apparent depth = -lambda x slope
+        self.assertEqual(len(tab.trend_fig.axes), 1)
+        self.assertEqual(len(tab.trend_fig.axes[0].get_legend().get_texts()), 2)
+
+    def test_a_file_without_fits_uses_whole_regions(self):
+        app, tab = self._tab(S.two_state_series())
+        self.assertEqual(tab.v["source"].get(), DT.SRC_REGIONS)
+        self.assertEqual([sp.name for sp in tab.species], ["Si 2p"])
+
+    def test_the_fitted_choice_without_fits_explains_itself(self):
+        app, tab = self._tab(S.two_state_series())
+        tab.v["source"].set(DT.SRC_FITS)
+        tab.reload()
+        self.assertEqual(tab.species, [])
+        self.assertIn("CasaXPS fit", tab.status.get())
+
+    def test_unticking_a_species_and_editing_lambda_update_the_table(self):
+        app, tab = self._tab(S.two_state_series(d_nm=1.5, fitted=True))
+        tab.rows[1]["use"].set(False)
+        tab.refresh()
+        self.assertEqual(list(self._table(tab)), ["Si El"])
+        tab.rows[0]["lam"].set("2.0")
+        tab.refresh()
+        self.assertAlmostEqual(float(self._table(tab)["Si El"][5]), 2.0 * 1.5 / 3.89, delta=0.01)
+
+    def test_the_axis_and_normalise_options_redraw(self):
+        app, tab = self._tab(S.two_state_series(fitted=True))
+        tab.x_mode.set("theta")
+        tab.normalise.set(False)
+        tab._draw()
+        ax = tab.trend_fig.axes[0]
+        self.assertIn("Emission angle", ax.get_xlabel())
+        self.assertIn("ln( I )", ax.get_ylabel())
+
+    def test_it_can_take_the_file_from_the_arxps_tab(self):
+        app = _make_app(self)
+        app.arxps.load_file(self._write(S.two_state_series(fitted=True)))
+        app.depth.use_arxps_file()
+        self.assertIsNotNone(app.depth.file)
+        self.assertEqual([sp.name for sp in app.depth.species], ["Si El", "Si Ox"])
+
+    def test_a_bad_file_is_refused_with_a_message(self):
+        app = _make_app(self)
+        with mock.patch.object(DT.messagebox, "showerror") as shown:
+            self.assertFalse(app.depth.load_file(os.path.join(os.path.dirname(__file__), "test_arxps.py")))
+        self.assertTrue(shown.called)
+        self.assertIsNone(app.depth.file)
+
+
 @unittest.skipUnless(HAVE_DISPLAY, "needs a display")
 class WithoutPlottingPackages(unittest.TestCase):
     def test_calculator_still_works_and_the_tab_shows_an_install_hint(self):
         with mock.patch.object(A, "HAVE_THICKOGRAM", False), mock.patch.object(A, "HAVE_ARXPS", False), \
-                mock.patch.object(A, "HAVE_PLOT", False):
+                mock.patch.object(A, "HAVE_DEPTH", False), mock.patch.object(A, "HAVE_PLOT", False):
             app = _make_app(self)
             self.assertFalse(hasattr(app, "thickogram"))
             self.assertFalse(hasattr(app, "arxps"))
+            self.assertFalse(hasattr(app, "depth"))
             texts = [w.cget("text") for w in app.thick_tab.winfo_children() if w.winfo_class() == "TLabel"]
             self.assertTrue(any("pip install numpy matplotlib" in t for t in texts))
             texts = [w.cget("text") for w in app.arxps_tab.winfo_children() if w.winfo_class() == "TLabel"]

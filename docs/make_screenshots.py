@@ -5,7 +5,7 @@ Regenerate the screenshots used in the documentation by driving the real window.
 
 Windows (it grabs the window rectangle with PIL.ImageGrab) and needs a visible display, numpy and matplotlib. Don't
 touch the mouse while it runs: the window is brought to the front and captured. Writes docs/images/calculator.png,
-calculator-cu.png, thickogram.png, arxps.png, arxps-fit.png and arxps-fitted.png. The inputs are the worked examples quoted in
+calculator-cu.png, thickogram.png, arxps.png, arxps-fit.png, arxps-fitted.png and depth-trend.png. The inputs are the worked examples quoted in
 docs/user-guide.md (the ARXPS ones use the synthetic files in docs/sample/).
 """
 import os
@@ -126,6 +126,12 @@ def main():
     tab.plot_nb.select(0)
     settle(app)
     grab(app, "arxps-fitted.png")
+
+    nb.select(app.depth_tab)                          # the Depth profile tab on the fitted synthetic series
+    tab = app.depth
+    tab.load_file(make_sample_data.SAMPLE_FITTED)
+    settle(app)
+    grab(app, "depth-trend.png")
     app.destroy()
 
 

@@ -27,6 +27,12 @@ ARXPS tab (arxps.py, arxps_tab.py, vamas.py, casa.py, synthetic.py)
     project carries no licence file; only the parser is used here, none of its line-shape tables. CasaXPS is a product
     of Casa Software Ltd.
 
+Depth profile tab (depthprofile.py, depth_tab.py)
+  - The methods follow the ideas of the NPL ARCtick package (P. J. Cumpson, J. Electron Spectrosc. Relat. Phenom. 73, 25
+    (1995)); the Surrey Trend Plot was suggested by J. Castle and J. Watts (University of Surrey). The code is an
+    independent implementation from the published physics: no code, text or images of ARCtick are used, because ARCtick
+    is distributed under a notice that it is not to be copied without the permission of NPL.
+
 Strohmeier calculator and presets
   - Equation: B. R. Strohmeier, Surf. Interface Anal. 15, 51-56 (1990); HarwellXPS Technical Note #1.
   - Al / Al2O3 presets: Strohmeier (1990). Cu oxide/hydroxide presets: M. C. Biesinger, Surf. Interface Anal. 49,

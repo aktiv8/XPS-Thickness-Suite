@@ -5,6 +5,7 @@ contamination films) from XPS peak areas. It has one window with a tab for each 
 
 Contents: [Starting the app](#starting-the-app), [The Calculator tab](#the-calculator-tab),
 [The Thickogram tab](#the-thickogram-tab), [The ARXPS tab](#the-arxps-tab),
+[The Depth profile tab](#the-depth-profile-tab),
 [Which tab should I use?](#which-tab-should-i-use), [Troubleshooting](#troubleshooting).
 
 ## Starting the app
@@ -266,6 +267,28 @@ and *SiO2*: the tab selects the fitted components, makes Si El the substrate and
 - Real data often show an intercept above zero: contamination, roughness and elastic scattering all bend the line. The
   badge says when it is more than the scatter allows.
 
+## The Depth profile tab
+
+![The Depth profile tab: the Surrey Trend Plot of a fitted synthetic Si 2p series](images/depth-trend.png)
+
+Use this tab when you want to know where several species sit in depth, not just the thickness of one overlayer. It reads the
+same VAMAS tilt series as the ARXPS tab. The method is in [Methods](methods.md#depth-profiles-depth-profile-tab).
+
+1. Press *Open VAMAS file* or *Use ARXPS tab's file* (which also takes the file you already loaded there).
+2. Check *Angle from*, *Offset* and *Max angle* as on the ARXPS tab.
+3. Choose *Species from*: *Fitted states* uses every chemical state of the CasaXPS fits in the file (chosen automatically if
+   there are any); *Whole regions* integrates each region with a Shirley background and works with any file.
+4. In the Species list untick anything you do not want and set each attenuation length *lambda* for your material. The
+   starting values are only a guide.
+
+### Surrey Trend Plot
+
+Each species is drawn as ln(intensity) against sec theta (or against theta), with error bars from counting statistics when
+they are known and a straight-line fit. Species whose lines run parallel, and whose kinetic energies are similar, may be
+distributed together. The table gives each line's slope, its error, the scatter of the points, an apparent depth
+(minus lambda times the slope), and which other species run parallel. Use it as a first look before choosing a model: it
+tells you how many distinct depth distributions the data hold and how noisy they are.
+
 ## Which tab should I use?
 
 | Your situation | Use |
@@ -274,6 +297,7 @@ and *SiO2*: the tab selects the fitted components, makes Si El the substrate and
 | Overlayer and substrate are different elements or different peaks, flat sample | Thickogram tab, shape Flat |
 | Coating on a micro-scale fibre or particle | Thickogram tab with a Topofactor |
 | A tilt series (several emission angles) in a VAMAS file | ARXPS tab |
+| Where several species sit in depth, from a tilt series | Depth profile tab |
 | Nanoparticles or nanofibres | Neither: the Topofactor model is not valid at this scale |
 
 For equal kinetic energies the Thickogram reduces exactly to the Strohmeier equation, so the two tabs agree where

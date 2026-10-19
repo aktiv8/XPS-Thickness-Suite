@@ -70,14 +70,8 @@ def smooth(y: np.ndarray, n: int = 5) -> np.ndarray:
     return np.convolve(p, np.ones(n) / n, mode="valid")[:len(y)]
 
 
-def shirley(y: np.ndarray, dx: float, n_end: int = SHIRLEY_END_POINTS, max_iter: int = 200,
-            tol: float = 1e-8) -> np.ndarray:
-    """
-    Iterative Shirley (Proctor-Sherwood) background on an ASCENDING binding-energy grid: the background rises from the
-    mean of the first n_end points to the mean of the last n_end, in proportion to the signal area at lower BE.
-    """
-    y = np.asarray(y, dtype=float)
-    low, high = float(np.mean(y[:n_end])), float(np.mean(y[-n_end:]))
+def _shirley_iterate(y: np.ndarray, dx: float, low: float, high: float, max_iter: int, tol: float):
+    """The classic fixed-point iteration. Returns (background, converged)."""
     bg = np.full_like(y, low)
     for _ in range(max_iter):
         sig = y - bg
@@ -87,8 +81,64 @@ def shirley(y: np.ndarray, dx: float, n_end: int = SHIRLEY_END_POINTS, max_iter:
         done = np.max(np.abs(new - bg)) <= tol * max(1.0, abs(high - low))
         bg = new
         if done:
-            break
+            return bg, True
+    return bg, False
+
+
+def _shirley_end(y: np.ndarray, dx: float, low: float, kappa: float) -> np.ndarray:
+    """The Shirley background for a given step rate kappa (dB/dE = kappa (y - B)), by the implicit trapezoid rule."""
+    h = 0.5 * kappa * dx
+    bg = np.empty_like(y)
+    bg[0] = low
+    for i in range(len(y) - 1):
+        bg[i + 1] = (bg[i] * (1.0 - h) + h * (y[i] + y[i + 1])) / (1.0 + h)
     return bg
+
+
+def shirley_info(y: np.ndarray, dx: float, n_end: int = SHIRLEY_END_POINTS, max_iter: int = 200,
+                 tol: float = 1e-8) -> Tuple[np.ndarray, bool]:
+    """
+    Iterative Shirley (Proctor-Sherwood) background on an ASCENDING binding-energy grid: the background rises from the
+    mean of the first n_end points to the mean of the last n_end, in proportion to the signal area at lower BE.
+    Returns (background, ok). The textbook fixed-point iteration can fail to converge when the end points are high
+    compared with the peak (a long loss tail), so when it does not converge the step rate is found directly (the
+    background obeys dB/dE = kappa (y - B) and must reach the high end); if no such rate exists the background is the
+    straight line between the end values and ok is False.
+    """
+    y = np.asarray(y, dtype=float)
+    low, high = float(np.mean(y[:n_end])), float(np.mean(y[-n_end:]))
+    bg, done = _shirley_iterate(y, dx, low, high, max_iter, tol)
+    if done and np.all(np.isfinite(bg)):
+        return bg, True
+    if high > low:
+        span = len(y) * dx
+        grid = np.geomspace(1e-3, 1e3, 160) / span
+        g_prev, k_prev = low - high, 0.0
+        for k in grid:
+            g = float(_shirley_end(y, dx, low, k)[-1]) - high
+            if g >= 0.0:
+                lo_k, hi_k = k_prev, k
+                for _ in range(80):
+                    mid = 0.5 * (lo_k + hi_k)
+                    if float(_shirley_end(y, dx, low, mid)[-1]) - high >= 0.0:
+                        hi_k = mid
+                    else:
+                        lo_k = mid
+                cand = _shirley_end(y, dx, low, 0.5 * (lo_k + hi_k))
+                line = low + (high - low) * np.linspace(0.0, 1.0, len(y))
+                # Reject a "solution" that swallows the peak (the spurious large-kappa branch): it must leave a
+                # sensible fraction of what a straight background leaves.
+                if float(np.sum(y - cand)) >= 0.2 * float(np.sum(y - line)):
+                    return cand, True
+                break
+            k_prev = k
+    return low + (high - low) * np.linspace(0.0, 1.0, len(y)), False
+
+
+def shirley(y: np.ndarray, dx: float, n_end: int = SHIRLEY_END_POINTS, max_iter: int = 200,
+            tol: float = 1e-8) -> np.ndarray:
+    """The Shirley background of `shirley_info` (see there for how it is found and when it falls back to a line)."""
+    return shirley_info(y, dx, n_end, max_iter, tol)[0]
 
 
 def shift_onto(be: np.ndarray, y: np.ndarray, shift: float, grid: np.ndarray) -> np.ndarray:
