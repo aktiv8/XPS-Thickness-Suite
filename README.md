@@ -13,7 +13,7 @@ Thickogram nomogram, Topofactor corrections for fibres and particles, and angle-
 | **Calculator and simulation** | Strohmeier equation | The overlayer and substrate are two chemical states of the **same core level** (metal and oxide components of Al 2p, Cu LMM, Si 2p ...). Uses densities and IMFPs and draws a simulated spectrum. |
 | **Thickogram** | Cumpson's Thickogram, with optional Topofactor | The overlayer and substrate are **different peaks** (a Fe 2p overlayer on Si 2p). Uses RSFs and kinetic-energy scaling and draws the nomogram. The Topofactor corrects for **fibres and particles**. |
 | **ARXPS (tilt series)** | Ratio against 1/cos(theta) from a VAMAS tilt series | You measured the **same spot at several emission angles**. Reads VAMAS files and takes the substrate and overlayer areas either from windows with a Shirley background or from a **peak fit saved by CasaXPS**; fits the thickness from the slope and plots it against azimuth if the file has one. |
-| **Depth profile (ARXPS)** | Surrey Trend Plot, Stratification, Layers (Gries) and regularised depth profiles | You want to see how **several species** change with emission angle and which ones sit together in depth. |
+| **Depth profile (ARXPS)** | Surrey Trend Plot, Stratification, Layers (Gries) and regularised and Murdoch (Tikhonov, apparent concentrations) depth profiles | You want to see how **several species** change with emission angle and which ones sit together in depth. |
 | **Method / References** | | The full documentation, with typeset equations, inside the app. |
 
 ![The Thickogram tab with a cylinder Topofactor applied](docs/images/thickogram.png)
@@ -86,7 +86,7 @@ display skip themselves when they are not available.
 - `thickogram.py`, `thickogram_tab.py`: Cumpson's Thickogram (maths, nomogram, tab).
 - `topofactor.py`: the Topofactor correction.
 - `arxps.py`, `arxps_tab.py`: angle-resolved analysis (alignment, Shirley background, areas, fits; the tab).
-- `depthprofile.py`, `depthlayers.py`, `depthreg.py`, `depth_tab.py`: species from a tilt series, the Surrey Trend Plot, Stratification, the Gries layer model and regularised profiles (the Depth profile tab).
+- `depthprofile.py`, `depthlayers.py`, `depthreg.py`, `depthmurdoch.py`, `depth_tab.py`: species from a tilt series, the Surrey Trend Plot, Stratification, the Gries layer model and regularised profiles (the Depth profile tab).
 - `casa.py`: reader for CasaXPS peak fits stored in VAMAS comments (ported from eXPoSe SpectraDeck).
 - `vamas.py`: VAMAS reader and writer. `synthetic.py`: synthetic tilt series for tests and the sample file.
 - `spectrum_sim.py`: simulated spectra (numpy only).

@@ -586,6 +586,24 @@ class DepthTabSmoke(unittest.TestCase):
         self.assertEqual([r[0] for r in rows], ["1", "2", "Sub"])
         self.assertEqual(rows[0][1], "C 1s")
 
+    def test_murdoch_panel_fits_and_the_eal_button_uses_the_kinetic_energy(self):
+        app, tab = self._layers_tab()
+        self.assertEqual([g["name"] for g in tab.mur_grid], ["C 1s", "O 1s", "Al 2p"])
+        self.assertEqual([g["order"].get() for g in tab.mur_grid], ["1", "2", "3"])
+        tab.mur_log.set("-4")
+        tab._mur_fit_now()
+        self.assertIsNotNone(tab.mur_fit)
+        self.assertEqual(len(tab.mur_table.get_children()), 3)
+        tab._mur_scurve_now()
+        self.assertIsNotNone(tab.mur_scurve)
+        tab._mur_ensemble_now()
+        self.assertIsNotNone(tab.mur_ens)
+        tab._mur_eal()
+        self.assertIn("kinetic energy", tab.mur_note.get())
+        tab.mur_grid[1]["order"].set("1")                                  # two peaks in the same place: refused, no crash
+        tab._mur_fit_now()
+        self.assertIn("different position", tab.mur_note.get())
+
     def test_scanning_the_ranges_fills_the_table_and_editing_a_thickness_clears_them(self):
         app, tab = self._layers_tab()
         tab.scan_layers_now()

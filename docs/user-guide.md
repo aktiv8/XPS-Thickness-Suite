@@ -335,6 +335,22 @@ negative concentration in a free profile means an assumption, such as an attenua
 Starting attenuation lengths are inelastic mean free paths; set *AL / IMFP* to about 0.8 to approximate attenuation lengths
 and press *Reload species*. Keep to angles below about 70 degrees.
 
+### Profile (Murdoch)
+
+A depth profile of the **apparent atomic concentrations** (peak area over sensitivity factor, shares summing to 100 at%),
+after Murdoch and McCulloch [20]. Because it uses shares, a factor common to all peaks cancels, so it is less sensitive to the
+tilt geometry than the intensity-based panels. Tick the species to use (give each its sensitivity factor), or load a CSV
+whose first column is the angle and whose other columns are the at% of each named peak.
+
+For each peak set the attenuation length (*Murdoch EAL* fills them from the kinetic energy, semi-quantitatively), its **Order** in the
+initial guess stack from the top (1) down to the substrate (last), and a guessed **thickness** for each layer. Press *Fit*:
+the left plot shows the profile (solid) and the initial guess (dashed); the right plots compare measured (points) and
+calculated apparent concentrations against angle and show the S-curve. *S-curve* scans log10 alpha and sets the largest
+alpha whose chi-squared is within 25 percent of the minimum; *Initial-guess ensemble* shades the spread of fits from guesses
+whose thicknesses vary by 50 percent, which is how much the answer depends on what you assumed. The table lists each peak's
+position and width at half maximum; a note says when the minimiser did not converge, or when there are far more slabs than
+data (the profile is then set by the regularisation and the guess). Treat narrow features as unresolved.
+
 ## Which tab should I use?
 
 | Your situation | Use |

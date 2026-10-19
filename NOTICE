@@ -32,6 +32,9 @@ Depth profile tab (depthprofile.py, depth_tab.py)
     (1995)); the Surrey Trend Plot was suggested by J. Castle and J. Watts (University of Surrey). The code is an
     independent implementation from the published physics: no code, text or images of ARCtick are used, because ARCtick
     is distributed under a notice that it is not to be copied without the permission of NPL.
+  - Profile (Murdoch) (depthmurdoch.py): the method of B. J. Murdoch and D. G. McCulloch, Surf. Interface Anal. 55, 658
+    (2023), DOI 10.1002/sia.7240, implemented independently from the equations of the paper. The authors' spreadsheet
+    was used only to check the numbers and is not included.
 
 Strohmeier calculator and presets
   - Equation: B. R. Strohmeier, Surf. Interface Anal. 15, 51-56 (1990); HarwellXPS Technical Note #1.

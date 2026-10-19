@@ -21,6 +21,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 
 import arxps as AR
 import depthlayers as DL
+import depthmurdoch as DM
 import depthprofile as DP
 import depthreg as DR
 import vamas as VM
@@ -31,6 +32,10 @@ SRC_FITS = "Fitted states (CasaXPS)"
 SRC_REGIONS = "Whole regions (Shirley)"
 SRC_AUTO = "Fits where available, else regions"
 MAX_LAYERS = 4
+MUR_SIGMA_ONE = "1 (as in the paper)"
+MUR_SIGMA_COUNTS = "counting statistics"
+MUR_FROM_SPECIES = "Species (areas / RSF)"
+MUR_FROM_CSV = "CSV of at%"
 SUB_LABEL = "Sub"
 GEO_NONE = "none (X-ray spot sets the area)"
 GEO_COS = "divide by cos θ (analyser sets it)"
@@ -80,6 +85,16 @@ class DepthTab(ttk.Frame):
         self.prof_note = tk.StringVar(value="")
         self.prof_bulk = []                  # per species: (mode StringVar, z_c StringVar)
         self.profiles = []                   # depthreg.ProfileFit of the last calculation
+        self.mur_dz, self.mur_depth, self.mur_log = tk.StringVar(value="0.1"), tk.StringVar(value="6"), tk.StringVar(value="-6")
+        self.mur_sigma = tk.StringVar(value=MUR_SIGMA_ONE)
+        self.mur_src = tk.StringVar(value=MUR_FROM_SPECIES)
+        self.mur_prior = tk.BooleanVar(value=True)
+        self.mur_note = tk.StringVar(value="")
+        self.mur_csv = None                  # (names, angles, X) of a loaded at% table
+        self.mur_grid = []                   # per peak: dict(name, lam, order, thick, species)
+        self.mur_fit = None                  # depthmurdoch.MurdochFit
+        self.mur_scurve = None               # [(log10 alpha, chi2, R)]
+        self.mur_ens = None                  # (z, mean, sd)
         self.file_label = tk.StringVar(value="No file loaded")
         self.status = tk.StringVar(value="Open a VAMAS tilt series (or use the one in the ARXPS tab).")
         self._after = None
@@ -318,6 +333,7 @@ class DepthTab(ttk.Frame):
         self._fill_species()
         self._default_layers()
         self._default_bulk()
+        self._mur_rebuild_grid()
         self.status.set(f"{len(species)} species at {len(species[0].angles)} angles; set each λ for your material.")
         self.refresh()
 
@@ -364,6 +380,7 @@ class DepthTab(ttk.Frame):
         self._build_strat_page(nb)
         self._build_layers_page(nb)
         self._build_profile_page(nb)
+        self._build_murdoch_page(nb)
         return frame
 
     def _canvas(self, parent):
@@ -894,6 +911,289 @@ class DepthTab(ttk.Frame):
         res = [p[1].notes[-1] for p in self.profiles if p[1].notes]
         if res and not self.prof_note.get():
             self.prof_note.set("Note: " + res[0] + ".")
+
+    # --- Murdoch & McCulloch Tikhonov profile (apparent concentrations) -----------------------------------
+    def _build_murdoch_page(self, nb):
+        page = ttk.Frame(nb, style="Card.TFrame", padding=4)
+        nb.add(page, text="Profile (Murdoch)")
+        bar = ttk.Frame(page, style="Card.TFrame")
+        bar.pack(side="top", fill="x")
+        for text, var, width, tip in (("Slab (nm):", self.mur_dz, 5, "Thickness of each depth slab."),
+                                      ("Depth (nm):", self.mur_depth, 5, "How deep the profile goes."),
+                                      ("log10 α:", self.mur_log, 5, "Regularisation strength in the units of the paper "
+                                       "(concentrations in at%, depths in Å): 1e-4 to 1e-6, so -4 to -6, is typical.")):
+            ttk.Label(bar, text=text, style="Card.TLabel").pack(side="left", padx=(0, 2))
+            e = ttk.Entry(bar, textvariable=var, width=width)
+            e.pack(side="left", padx=(0, 8))
+            Tooltip(e, tip)
+        cb = ttk.Combobox(bar, textvariable=self.mur_sigma, values=[MUR_SIGMA_ONE, MUR_SIGMA_COUNTS], state="readonly",
+                          width=18)
+        cb.pack(side="left", padx=(0, 8))
+        Tooltip(cb, "Weight of each apparent concentration in chi-squared. 1 (a fraction), as in the authors' spreadsheet, "
+                    "keeps the paper's values of α meaningful; counting statistics weights by the measurement noise (then "
+                    "chi-squared is far larger and α must be larger too).")
+        ttk.Label(bar, text="Data:", style="Card.TLabel").pack(side="left")
+        src = ttk.Combobox(bar, textvariable=self.mur_src, values=[MUR_FROM_SPECIES, MUR_FROM_CSV], state="readonly", width=20)
+        src.pack(side="left", padx=(2, 2))
+        src.bind("<<ComboboxSelected>>", lambda e: self._mur_source_changed())
+        ttk.Button(bar, text="Load CSV…", command=self._mur_load_csv).pack(side="left", padx=2)
+        bar2 = ttk.Frame(page, style="Card.TFrame")
+        bar2.pack(side="top", fill="x", pady=(3, 0))
+        for text, cmd, tip in (("Fit", self._mur_fit_now, "Minimise Q = chi-squared + α R from the initial guess."),
+                               ("S-curve", self._mur_scurve_now, "chi-squared against log α (the paper's S-curve) and a "
+                                "suggested α: the largest whose chi-squared is within 25% of the minimum."),
+                               ("Initial-guess ensemble", self._mur_ensemble_now, "Repeat the fit from 12 initial guesses whose "
+                                "layer thicknesses vary by ±50%, and show the mean and spread (the paper's Fig. 3)."),
+                               ("Murdoch EAL", self._mur_eal, "Set every λ from the kinetic energy alone, 143/E² + "
+                                "0.054 √E nm, the approximation in the paper's spreadsheet (semi-quantitative).")):
+            b = ttk.Button(bar2, text=text, command=cmd)
+            b.pack(side="left", padx=(0, 4))
+            Tooltip(b, tip)
+        ck = ttk.Checkbutton(bar2, text="Use the initial guess", variable=self.mur_prior, style="Card.TCheckbutton")
+        ck.pack(side="left", padx=8)
+        Tooltip(ck, "Start from the layer model below (prior knowledge). Untick to start flat with equal shares; use a larger α.")
+        ttk.Label(bar2, textvariable=self.mur_note, style="CardMuted.TLabel", wraplength=700, justify="left").pack(
+            side="left", padx=6)
+        mid = ttk.Frame(page, style="Card.TFrame")
+        mid.pack(side="top", fill="x", pady=(2, 0))
+        self.mur_grid_frame = ttk.Frame(mid, style="Card.TFrame")
+        self.mur_grid_frame.pack(side="left", anchor="n")
+        lower = ttk.Frame(page, style="Card.TFrame")
+        lower.pack(side="bottom", fill="x", pady=(6, 0))
+        cols = ("sp", "z", "fwhm", "lam", "note")
+        heads = ("Peak", "Peak at (nm)", "Width at half max (nm)", "λ (nm)", "Note")
+        widths = (90, 90, 150, 70, 420)
+        self.mur_table = ttk.Treeview(lower, columns=cols, show="headings", height=4)
+        for col, h, w in zip(cols, heads, widths):
+            self.mur_table.heading(col, text=h)
+            self.mur_table.column(col, width=w, anchor="w" if col in ("sp", "note") else "e", stretch=(col == "note"))
+        self.mur_table.pack(fill="x")
+        self.mur_fig, self.mur_canvas = self._canvas(page)
+
+    def _mur_source_changed(self):
+        self.mur_fit = self.mur_scurve = self.mur_ens = None
+        self._mur_rebuild_grid()
+        self._draw_mur()
+
+    def _mur_load_csv(self):
+        path = filedialog.askopenfilename(title="Open a table of measured at%",
+                                          filetypes=[("CSV / text", "*.csv *.txt *.tsv"), ("All files", "*.*")])
+        if path:
+            self.load_mur_csv(path)
+
+    def load_mur_csv(self, path):
+        try:
+            self.mur_csv = DM.load_at_pct_csv(path)
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Cannot read the table", str(exc))
+            return False
+        self.mur_src.set(MUR_FROM_CSV)
+        self._mur_source_changed()
+        return True
+
+    def _mur_rebuild_grid(self):
+        """One row per peak: lambda, position in the initial guess stack and its thickness."""
+        for w in self.mur_grid_frame.winfo_children():
+            w.destroy()
+        self.mur_grid = []
+        if self.mur_src.get() == MUR_FROM_CSV:
+            names = list(self.mur_csv[0]) if self.mur_csv else []
+            lookup = {sp.name.replace(" ", "").lower(): sp for sp in self.species}
+            peaks = [(n, lookup.get(n.replace(" ", "").lower())) for n in names]
+        else:
+            peaks = [(sp.name, sp) for sp in self.species]
+        if not peaks:
+            return
+        sp_list = [p[1] for p in peaks if p[1] is not None]
+        order, sub = list(range(len(peaks))), len(peaks) - 1
+        if len(sp_list) == len(peaks):
+            try:
+                layout, _, _ = DL.default_layout(sp_list, len(peaks), self._max_angle())
+                depth = {i: (1e9 if lay == DL.SUBSTRATE_LAYER else i) for i, lay in enumerate(layout)}
+                rows = DP.stratification(sp_list, max_angle=self._max_angle())
+                key = {i: (1e9 if layout[i] == DL.SUBSTRATE_LAYER else (rows[i].z_nm if rows[i].z_nm is not None else 1e8))
+                       for i in range(len(peaks))}
+                order = sorted(range(len(peaks)), key=lambda i: key[i])
+            except ValueError:
+                pass
+        heads = ("Peak", "λ (nm)", "Order", "Guess thickness (nm)")
+        for c, h in enumerate(heads):
+            ttk.Label(self.mur_grid_frame, text=h, style="ColHead.TLabel").grid(row=0, column=c, padx=4, sticky="w")
+        for i, (name, sp) in enumerate(peaks):
+            lam = tk.StringVar(value=f"{sp.lam_nm:.2f}" if sp is not None else "2.00")
+            pos = tk.StringVar(value=str(order.index(i) + 1))
+            thick = tk.StringVar(value="1.0")
+            ttk.Label(self.mur_grid_frame, text=name, style="Card.TLabel").grid(row=i + 1, column=0, sticky="w", padx=4)
+            e1 = ttk.Entry(self.mur_grid_frame, textvariable=lam, width=6)
+            e1.grid(row=i + 1, column=1, padx=4, pady=1)
+            Tooltip(e1, "Effective attenuation length of this peak's electrons (nm).")
+            cbb = ttk.Combobox(self.mur_grid_frame, textvariable=pos, values=[str(k + 1) for k in range(len(peaks))],
+                               state="readonly", width=3)
+            cbb.grid(row=i + 1, column=2, padx=4)
+            Tooltip(cbb, "Position in the initial guess stack from the top (1); the last one is the substrate.")
+            e2 = ttk.Entry(self.mur_grid_frame, textvariable=thick, width=6)
+            e2.grid(row=i + 1, column=3, padx=4)
+            Tooltip(e2, "Guessed thickness of this peak's layer in the initial stack (ignored for the substrate).")
+            self.mur_grid.append(dict(name=name, lam=lam, order=pos, thick=thick, species=sp))
+
+    def _mur_eal(self):
+        if not self.mur_grid:
+            return
+        for g in self.mur_grid:
+            sp = g["species"]
+            if sp is not None and sp.ke_ev:
+                g["lam"].set(f"{DM.eal_murdoch_nm(sp.ke_ev):.2f}")
+        self.mur_note.set("λ set from the kinetic energy alone (semi-quantitative); edit any value.")
+
+    def _mur_collect(self):
+        """(names, angles, X, sigma, lam, order, thickness) from the data source and the grid."""
+        if self.mur_src.get() == MUR_FROM_CSV:
+            if not self.mur_csv:
+                raise ValueError("Load a CSV of measured at% first (angle, then one column per peak).")
+            names, angles, x = self.mur_csv
+            sig, rows = None, list(range(len(names)))
+        else:
+            use = {id(sp): row["use"].get() for sp, row in zip(self.species, self.rows)}
+            rows = [i for i, g in enumerate(self.mur_grid) if g["species"] is not None and use.get(id(g["species"]), True)]
+            for sp in [self.mur_grid[i]["species"] for i in rows]:
+                row = self.rows[self.species.index(sp)]
+                rsf = _to_float(row["rsf"].get())
+                sp.rsf = rsf if rsf and rsf > 0 else sp.rsf
+            names, angles, x, sig = DM.inputs_from_species([self.mur_grid[i]["species"] for i in rows], self._max_angle())
+        lam = []
+        for i in rows:
+            v = _to_float(self.mur_grid[i]["lam"].get())
+            if not v or v <= 0:
+                raise ValueError(f"Enter a positive λ for {self.mur_grid[i]['name']}.")
+            lam.append(v)
+        pos = [int(self.mur_grid[i]["order"].get()) for i in rows]
+        if len(set(pos)) != len(pos):
+            raise ValueError("Give each peak a different position in the initial guess stack (Order).")
+        order = [k for k, _ in sorted(enumerate(pos), key=lambda kv: kv[1])]
+        thick = []
+        for k in order[:-1]:
+            v = _to_float(self.mur_grid[rows[k]]["thick"].get())
+            thick.append(max(v, 0.0) if v is not None else 1.0)
+        sigma = 1.0
+        if self.mur_sigma.get() == MUR_SIGMA_COUNTS and sig is not None:
+            sigma = np.maximum(sig, 1e-4)
+        return names, angles, x, sigma, np.array(lam), order, thick
+
+    def _mur_settings(self):
+        try:
+            dz, depth = float(self.mur_dz.get()), float(self.mur_depth.get())
+            la = float(self.mur_log.get())
+        except ValueError:
+            raise ValueError("Enter numbers for the slab thickness, the depth and log10 α.")
+        if dz <= 0 or depth <= 2 * dz:
+            raise ValueError("The depth must be several slabs deep.")
+        return dz, depth, la
+
+    def _mur_prior_c0(self, order, thick, n_species, dz, depth):
+        if not self.mur_prior.get():
+            return None
+        z = DM.depths(int(round(depth / dz)), dz)
+        return DM.layer_guess(order, thick, n_species, z)
+
+    def _mur_fit_now(self):
+        try:
+            dz, depth, la = self._mur_settings()
+            names, angles, x, sigma, lam, order, thick = self._mur_collect()
+            c0 = self._mur_prior_c0(order, thick, len(names), dz, depth)
+            self.mur_fit = DM.fit(names, angles, x, lam, dz, depth, 10.0 ** la, sigma, c0)
+        except ValueError as exc:
+            self.mur_note.set(str(exc))
+            return
+        f = self.mur_fit
+        self.mur_note.set(f"chi-squared {f.chi2:.4g}, R {f.r_term:.4g}, Q {f.q:.4g}; {f.iterations} iterations"
+                          + ("" if f.converged else " (not converged)") + ". " + " ".join(f.notes))
+        self._draw_mur()
+
+    def _mur_scurve_now(self):
+        try:
+            dz, depth, la = self._mur_settings()
+            names, angles, x, sigma, lam, order, thick = self._mur_collect()
+            c0 = self._mur_prior_c0(order, thick, len(names), dz, depth)
+            self.mur_note.set("Scanning α…")
+            self.update_idletasks()
+            self.mur_scurve = DM.s_curve(names, angles, x, lam, [-2, -3, -4, -5, -6, -7, -8, -9, -10], dz, depth, sigma, c0)
+        except ValueError as exc:
+            self.mur_note.set(str(exc))
+            return
+        best = DM.suggest_alpha(self.mur_scurve)
+        self.mur_log.set(f"{best:g}")
+        self.mur_note.set(f"S-curve done: log10 α set to {best:g}, the largest whose chi-squared is within 25% of the minimum.")
+        self._mur_fit_now()
+
+    def _mur_ensemble_now(self):
+        try:
+            dz, depth, la = self._mur_settings()
+            names, angles, x, sigma, lam, order, thick = self._mur_collect()
+            self.mur_note.set("Fitting from 12 initial guesses…")
+            self.update_idletasks()
+            z, mean, sd, fits = DM.ensemble(names, angles, x, lam, order, thick, 0.5, 12, 0, dz, depth, 10.0 ** la, sigma)
+        except ValueError as exc:
+            self.mur_note.set(str(exc))
+            return
+        self.mur_ens = (z, mean, sd)
+        self.mur_note.set(f"Mean and spread of 12 fits from perturbed initial guesses: largest spread {float(sd.max()):.1f} at%.")
+        if self.mur_fit is None:
+            self._mur_fit_now()
+        self._draw_mur()
+
+    def _draw_mur(self):
+        fig = self.mur_fig
+        fig.clear()
+        self.mur_table.delete(*self.mur_table.get_children())
+        f = self.mur_fit
+        if f is None:
+            ax = fig.add_subplot(111)
+            ax.axis("off")
+            ax.text(0.5, 0.5, "Tikhonov depth profile of the apparent atomic concentrations (Murdoch and McCulloch).\n"
+                              "Give each peak a λ and a place in the initial stack, then press Fit.\nThe S-curve suggests "
+                              "α, and the ensemble shows how much the initial guess matters.", ha="center", va="center",
+                    color=MUTED, fontsize=11)
+            self.mur_canvas.draw_idle()
+            return
+        gs = fig.add_gridspec(2, 2, width_ratios=[3, 2])
+        ax1, ax2, ax3 = fig.add_subplot(gs[:, 0]), fig.add_subplot(gs[0, 1]), fig.add_subplot(gs[1, 1])
+        for j, name in enumerate(f.names):
+            colour = PALETTE[j % len(PALETTE)]
+            ax1.plot(f.z_nm, f.c_pct[:, j], "-", color=colour, lw=1.8, label=name)
+            if self.mur_prior.get():
+                ax1.plot(f.z_nm, f.c0_pct[:, j], "--", color=colour, lw=0.8, alpha=0.6)
+            if self.mur_ens is not None and len(self.mur_ens[0]) == len(f.z_nm):
+                z, mean, sd = self.mur_ens
+                ax1.fill_between(z, mean[:, j] - sd[:, j], mean[:, j] + sd[:, j], color=colour, alpha=0.15, lw=0)
+            ax2.plot(f.angles, 100 * f.x_meas[j], "o", color=colour, ms=5)
+            ax2.plot(f.angles, 100 * f.x_calc[j], "--", color=colour, lw=1.2)
+            fw = f.fwhm_nm(j)
+            self.mur_table.insert("", "end", values=(name, f"{f.peak_position_nm(j):.2f}", "-" if fw is None else f"{fw:.2f}",
+                                                     f"{f.lam_nm[j]:.2f}", ""))
+        ax1.set_xlabel("Depth (nm)")
+        ax1.set_ylabel("Concentration (at%)")
+        ax1.set_title("Depth profile (solid) and initial guess (dashed)", fontsize=10)
+        ax1.set_ylim(0, 102)
+        ax1.grid(alpha=0.3)
+        ax1.legend(fontsize=8, loc="best")
+        ax2.set_xlabel("Emission angle θ (°)")
+        ax2.set_ylabel("Apparent conc. (at%)")
+        ax2.set_title("Measured (points) and calculated", fontsize=10)
+        ax2.grid(alpha=0.3)
+        if self.mur_scurve:
+            las = [c[0] for c in self.mur_scurve]
+            ax3.semilogy(las, [max(c[1], 1e-12) for c in self.mur_scurve], "o-", color=ACCENT, ms=4)
+            ax3.axvline(f.alpha and math.log10(f.alpha), color="#6b7280", ls=":", lw=1)
+            ax3.set_xlabel("log10 α")
+            ax3.set_ylabel("chi-squared")
+            ax3.set_title("S-curve", fontsize=10)
+            ax3.grid(alpha=0.3)
+        else:
+            ax3.axis("off")
+            ax3.text(0.5, 0.5, "Press S-curve to see chi-squared\nagainst α", ha="center", va="center", color=MUTED,
+                     fontsize=9)
+        fig.subplots_adjust(left=0.07, right=0.98, top=0.92, bottom=0.12, wspace=0.28, hspace=0.55)
+        self.mur_canvas.draw_idle()
 
     # --- trend plot ---------------------------------------------------------------------------------------
     def _draw(self):

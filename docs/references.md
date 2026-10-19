@@ -61,8 +61,15 @@ only where they were checked against the paper itself or a bibliographic record.
     measurements on analyte depth profiles by the angle-resolved signal ratio method, *J. Vac. Sci. Technol. A* **7**,
     1655-1662 (1989). DOI [10.1116/1.576066](https://doi.org/10.1116/1.576066). The signal-ratio idea behind the Layers panel.
 
+20. B. J. Murdoch and D. G. McCulloch, Surface analysis insight note: Straightforward concentration depth profiling by
+    angle-resolved X-ray photoelectron spectroscopy using a Tikhonov regularization algorithm, *Surf. Interface Anal.* **55**,
+    658-664 (2023). DOI [10.1002/sia.7240](https://doi.org/10.1002/sia.7240). The method of the Profile (Murdoch) panel.
+21. M. P. Seah and W. A. Dench, Quantitative electron spectroscopy of surfaces: a standard data base for electron inelastic
+    mean free paths in solids, *Surf. Interface Anal.* **1**, 2-11 (1979). The kinetic-energy-only attenuation length formula
+    offered there.
+
 ## Citing
 
 If you use the Topofactor correction in published work, please cite the paper by Shard and co-workers [4] and the
 Thickogram paper by Cumpson [3]. For the Strohmeier calculator cite [1], and for the Cu presets [5]. For the
-angle-resolved analysis see [12] and [14]; for fits taken from CasaXPS see [17].
+angle-resolved analysis see [12] and [14]; for fits taken from CasaXPS see [17]; for the Profile (Murdoch) panel cite [20].

@@ -538,6 +538,44 @@ with $L$ the second-difference matrix. They show how far counting noise alone mo
 bias that smoothing always adds, so a narrow band does not mean an accurate profile. The species are solved one at a time;
 *Atomic fraction* rescales them to add to 1 at each depth for display only.
 
+### Profile (Murdoch)
+
+Murdoch and McCulloch [20] fit the **apparent atomic concentrations** rather than the intensities. For peak $j$ at emission
+angle $\theta_k$ the measured value is $X_{jk}$, the share of peak $j$ in the sum of all the peak areas divided by their
+sensitivity factors. Any factor common to every peak (flux, analysed area, the tilt geometry) cancels in that share, which
+is the method's main attraction. With the sample divided into slabs $i$ at depths $z_i$ and concentrations $c_{ij}$ in at%,
+
+```math
+I_{jk} = \sum_i c_{ij}\,e^{-z_i/(\lambda_j\cos\theta_k)},\qquad I^{\infty}_{jk} = \sum_i e^{-z_i/(\lambda_j\cos\theta_k)},\qquad X^{calc}_{jk} = \frac{I_{jk}/I^{\infty}_{jk}}{\sum_l I_{lk}/I^{\infty}_{lk}}
+```
+
+where $\lambda_j$ is the attenuation length of peak $j$ and $I^{\infty}$ the signal of a uniform sample. The profile minimises
+
+```math
+Q = \chi^{2} + \alpha R,\qquad \chi^{2} = \sum_{j,k}\left(\frac{X^{calc}_{jk}-X_{jk}}{\sigma}\right)^{2},\qquad R = \sum_{i,j}\frac{(c_{i+1,j}-c_{ij})^{2}}{\Delta}
+```
+
+with the concentrations in at%, the slab thickness $\Delta$ in angstrom and $\sigma = 1$ for fractions, the convention in which the
+paper's $\alpha$ of about $10^{-6}$ to $10^{-4}$ makes sense. The penalty is the squared concentration **gradient**, which unlike
+a penalty on the squared concentration does not push the substrate towards zero. Here the concentrations are written as a
+softmax over the peaks in each slab, so they add to exactly 100 at% and stay positive, and Q is minimised with its analytic
+gradient (an L-BFGS iteration from the initial guess).
+
+The result depends on the **initial guess**, a layer stack with guessed thicknesses, which is how prior knowledge enters.
+*Initial-guess ensemble* repeats the fit from guesses whose thicknesses vary by up to 50 percent and plots the mean and
+spread. The **S-curve** is $\chi^{2}$ against $\log_{10}\alpha$; the suggested $\alpha$ is the largest one whose $\chi^{2}$ is
+within 25 percent of the minimum (a rule of thumb that automates reading the curve, not part of the paper). The *Murdoch EAL*
+button sets every attenuation length from the kinetic energy alone, $143/E^{2} + 0.054\sqrt{E}$ nm, the semi-quantitative
+approximation in the authors' spreadsheet (after Seah and Dench [21]); use material specific lengths where you have them.
+
+Differences from the authors' Excel implementation: their spreadsheet optimises free amplitudes per slab and rescales to 100
+at% afterwards. That is not well posed, because the apparent concentrations do not depend on a common scale, so the
+penalty (which falls with the scale) drives all amplitudes to zero when they are free to move; the closed form above does not
+have that degeneracy. Fed the spreadsheet's example (WS2 on Al2O3, five angles) with its attenuation lengths, the forward model
+reproduces its stored solution's chi-squared (0.0026 against 0.0023), and the closed fit recovers the same stack: carbon on
+top, a sulfur and tungsten layer about 1 nm thick, then oxygen and aluminium. Five angles cannot resolve a profile
+below about $\lambda\cos\theta_{max}$, so features narrower than that are the regulariser and the guess talking.
+
 ### Attenuation lengths and the range of validity
 
 Every method here depends on the attenuation lengths. The starting values are TPP-2M inelastic mean free paths for an
