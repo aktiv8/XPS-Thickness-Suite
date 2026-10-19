@@ -13,7 +13,7 @@ Thickogram nomogram, Topofactor corrections for fibres and particles, and angle-
 | **Calculator and simulation** | Strohmeier equation | The overlayer and substrate are two chemical states of the **same core level** (metal and oxide components of Al 2p, Cu LMM, Si 2p ...). Uses densities and IMFPs and draws a simulated spectrum. |
 | **Thickogram** | Cumpson's Thickogram, with optional Topofactor | The overlayer and substrate are **different peaks** (a Fe 2p overlayer on Si 2p). Uses RSFs and kinetic-energy scaling and draws the nomogram. The Topofactor corrects for **fibres and particles**. |
 | **ARXPS (tilt series)** | Ratio against 1/cos(theta) from a VAMAS tilt series | You measured the **same spot at several emission angles**. Reads VAMAS files and takes the substrate and overlayer areas either from windows with a Shirley background or from a **peak fit saved by CasaXPS**; fits the thickness from the slope and plots it against azimuth if the file has one. |
-| **Depth profile (ARXPS)** | Surrey Trend Plot (more methods to follow) | You want to see how **several species** change with emission angle and which ones sit together in depth. |
+| **Depth profile (ARXPS)** | Surrey Trend Plot and Stratification (more methods to follow) | You want to see how **several species** change with emission angle and which ones sit together in depth. |
 | **Method / References** | | The full documentation, with typeset equations, inside the app. |
 
 ![The Thickogram tab with a cylinder Topofactor applied](docs/images/thickogram.png)

@@ -420,6 +420,42 @@ exploratory, not a depth profile:
 Curves can be normalised to their first angle so that parallel lines lie on top of each other. Angles above the maximum
 angle are drawn as open symbols and left out of the fits.
 
+### Geometry
+
+An absolute intensity also carries any change of the analysed area or acceptance with tilt, a factor common to every species.
+Ratios of species at one angle (as on the ARXPS tab) do not need it, and parallel lines on the Trend Plot stay parallel,
+but depths and amounts do. The *Geometry* option divides every intensity by $\cos\theta$ when the analyser defines the
+analysed area; with an X-ray spot that defines it, nothing is changed. If every species, the substrate included, falls
+with angle much faster than a thin layer can explain (a species placed deeper than the whole sample is thick), the
+analysed area probably changes with tilt and the cosine correction is worth trying. On a K-Alpha tilt series of a silicon
+wafer the oxygen 1s signal is placed 2.6 nm deep without it, outside a 1.7 nm oxide, and 0.6 nm deep with it.
+
+### Stratification
+
+A thin layer of areal amount $n$ at depth $z$ gives $I(\theta) = S\,n\,\exp(-z\sec\theta/\lambda)$, with $S$ the sensitivity
+factor. Two angles $a$ and $b$ therefore give the depth and the amount:
+
+```math
+R = \frac{I(\theta_b)}{I(\theta_a)},\qquad z = -\frac{\lambda\,\ln R}{\sec\theta_b-\sec\theta_a},\qquad n = \frac{I(\theta_a)\,\exp\left(z\sec\theta_a/\lambda\right)}{S}
+```
+
+The amount is the intensity corrected for the attenuation by the material above, divided by the sensitivity factor; the tab
+reports each species' share of the total. Measurements at only normal emission and one oblique angle (about 67.5 degrees is
+usual) are enough. The uncertainty of the depth comes from the counting statistics of the two areas:
+
+```math
+\sigma_z = \frac{\lambda}{\sec\theta_b-\sec\theta_a}\sqrt{\left(\frac{\sigma_a}{I_a}\right)^2+\left(\frac{\sigma_b}{I_b}\right)^2}
+```
+
+With *Use every angle* the line $\ln I = \ln(S\,n) - (z/\lambda)\sec\theta$ is fitted instead, which gives the same depth and
+amount for a thin layer and an error from the scatter. The result is drawn as bars: position is the average depth and width
+the relative amount.
+
+Limits: a species that is spread over a thickness, or sits in two layers, is reported at one average depth. The tab tests the
+curvature of $\ln I$ against $\sec\theta$ (the t statistic of the quadratic term) and warns when it is large. A species whose
+intensity rises with angle lies at the surface and gets a negative depth with a note. A substrate that extends to infinite
+depth is not a thin layer: its signal is reported at its information depth and the curvature warning usually fires.
+
 ## Spectrum simulation
 
 The Simulated spectrum pane draws what a given thickness would look like. It is an **estimate, not a fit**.

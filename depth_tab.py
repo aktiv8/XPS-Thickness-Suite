@@ -16,6 +16,7 @@ from tkinter import ttk, filedialog, messagebox
 
 import numpy as np
 from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 import arxps as AR
@@ -26,6 +27,8 @@ from gui_common import ACCENT, BADGE, CARD, MUTED, Tooltip, _to_float
 NO_AZIMUTH = "None (single azimuth)"
 SRC_FITS = "Fitted states (CasaXPS)"
 SRC_REGIONS = "Whole regions (Shirley)"
+GEO_NONE = "none (X-ray spot sets the area)"
+GEO_COS = "divide by cos θ (analyser sets it)"
 # a colour-blind-safe cycle (Okabe and Ito) with a few extras
 PALETTE = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#F0E442", "#000000",
            "#7F3C8D", "#11A579", "#3969AC", "#E73F74"]
@@ -47,14 +50,17 @@ class DepthTab(ttk.Frame):
         self.file = None
         self.species = []                    # depthprofile.Species, as loaded
         self.rows = []                       # per species: dict(use, lam, rsf) tk variables
-        self.v = {k: tk.StringVar() for k in ("angle_src", "azim_src", "azimuth", "offset", "max_angle", "source")}
+        self.v = {k: tk.StringVar() for k in ("angle_src", "azim_src", "azimuth", "offset", "max_angle", "source", "geometry")}
         self.v["offset"].set("0")
         self.v["max_angle"].set(f"{DP.DEFAULT_MAX_ANGLE:g}")
         self.v["source"].set(SRC_FITS)
+        self.v["geometry"].set(GEO_NONE)
         self.transmission = tk.BooleanVar(value=True)
         self.x_mode = tk.StringVar(value="sec")
         self.normalise = tk.BooleanVar(value=True)
         self.show_fits = tk.BooleanVar(value=True)
+        self.strat_a, self.strat_b = tk.StringVar(), tk.StringVar()
+        self.strat_all = tk.BooleanVar(value=False)
         self.file_label = tk.StringVar(value="No file loaded")
         self.status = tk.StringVar(value="Open a VAMAS tilt series (or use the one in the ARXPS tab).")
         self._after = None
@@ -121,12 +127,18 @@ class DepthTab(ttk.Frame):
                                   "Shirley background (any file).", [SRC_FITS, SRC_REGIONS])
         for cb in (self.angle_cb, self.azim_cb, self.src_cb):
             cb.bind("<<ComboboxSelected>>", lambda e: self.reload())
+        self.geo_cb = self._combo(card, self.v["geometry"], 7, "Geometry:", "Any change of the analysed area with tilt "
+                                  "scales every intensity by the same factor. 'none' assumes the X-ray spot defines "
+                                  "the area. If all species fall with angle much faster than their depths can explain "
+                                  "(a species placed deeper than the whole sample is thick), try dividing by cos θ.",
+                                  [GEO_NONE, GEO_COS])
+        self.geo_cb.bind("<<ComboboxSelected>>", lambda e: self.reload())
         ck = ttk.Checkbutton(card, text="Transmission-correct", variable=self.transmission, style="Card.TCheckbutton",
                              command=self.reload)
-        ck.grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ck.grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
         Tooltip(ck, "Divide by the transmission function at each peak's kinetic energy so peaks at different energies "
                     "can be compared.")
-        ttk.Button(card, text="Reload species", command=self.reload).grid(row=7, column=2, columnspan=2, sticky="e")
+        ttk.Button(card, text="Reload species", command=self.reload).grid(row=8, column=2, columnspan=2, sticky="e")
         return card
 
     # --- species card ---------------------------------------------------------------------------------
@@ -271,7 +283,9 @@ class DepthTab(ttk.Frame):
             return
         for sp in species:
             sp.lam_nm = float(self.lam_default(sp.ke_ev)) if sp.ke_ev else 2.0
+        species = DP.apply_geometry(species, 1.0 if self.v["geometry"].get() == GEO_COS else 0.0)
         self.species = species
+        self._fill_angle_choices()
         self._fill_species()
         self.status.set(f"{len(species)} species at {len(species[0].angles)} angles; set each λ for your material.")
         self.refresh()
@@ -304,6 +318,7 @@ class DepthTab(ttk.Frame):
     def refresh(self):
         self._after = None
         self._draw()
+        self._draw_strat()
 
     # --- right-hand side ------------------------------------------------------------------------------
     def _build_right(self):
@@ -314,6 +329,7 @@ class DepthTab(ttk.Frame):
         nb.grid(row=0, column=0, sticky="nsew")
         self.plot_nb = nb
         self._build_trend_page(nb)
+        self._build_strat_page(nb)
         return frame
 
     def _canvas(self, parent):
@@ -356,6 +372,96 @@ class DepthTab(ttk.Frame):
                                     stretch=(c == "note"))
         self.trend_table.pack(fill="x")
         self.trend_fig, self.trend_canvas = self._canvas(page)
+
+    # --- stratification -----------------------------------------------------------------------------------
+    def _fill_angle_choices(self):
+        angles = sorted({float(a) for sp in self.species for a in sp.angles})
+        labels = [f"{a:g}" for a in angles]
+        for cb in (self.strat_a_cb, self.strat_b_cb):
+            cb.configure(values=labels)
+        if labels:
+            self.strat_a.set(labels[0])
+            try:
+                limit = self._number("max_angle", "Max angle")
+            except ValueError:
+                limit = DP.DEFAULT_MAX_ANGLE
+            ok = [a for a in angles if a <= limit and a != angles[0]] or angles[1:] or angles
+            self.strat_b.set(f"{min(ok, key=lambda a: abs(a - 67.5)):g}")
+
+    def _build_strat_page(self, nb):
+        page = ttk.Frame(nb, style="Card.TFrame", padding=4)
+        nb.add(page, text="Stratification")
+        bar = ttk.Frame(page, style="Card.TFrame")
+        bar.pack(side="top", fill="x")
+        ttk.Label(bar, text="Angles:", style="Card.TLabel").pack(side="left")
+        self.strat_a_cb = ttk.Combobox(bar, textvariable=self.strat_a, state="readonly", width=6)
+        self.strat_b_cb = ttk.Combobox(bar, textvariable=self.strat_b, state="readonly", width=6)
+        self.strat_a_cb.pack(side="left", padx=4)
+        ttk.Label(bar, text="and", style="Card.TLabel").pack(side="left")
+        self.strat_b_cb.pack(side="left", padx=4)
+        for cb in (self.strat_a_cb, self.strat_b_cb):
+            cb.bind("<<ComboboxSelected>>", lambda e: self._draw_strat())
+        Tooltip(self.strat_a_cb, "The near-normal angle. Two measurements are enough: normal emission and one oblique "
+                                 "angle (about 67.5 degrees is typical).")
+        c = ttk.Checkbutton(bar, text="Use every angle (fit instead)", variable=self.strat_all,
+                            style="Card.TCheckbutton", command=self._draw_strat)
+        c.pack(side="left", padx=14)
+        Tooltip(c, "Fit ln I against sec θ over all angles up to the maximum instead of using just two.")
+        lower = ttk.Frame(page, style="Card.TFrame")
+        lower.pack(side="bottom", fill="x", pady=(6, 0))
+        cols = ("sp", "z", "se", "amount", "ratio", "curv", "note")
+        heads = ("Species", "Depth (nm)", "± se", "Amount (%)", "I(b)/I(a)", "Curvature t", "Note")
+        widths = (90, 80, 65, 80, 75, 85, 340)
+        self.strat_table = ttk.Treeview(lower, columns=cols, show="headings", height=4 if self.compact else 6)
+        for col, h, w in zip(cols, heads, widths):
+            self.strat_table.heading(col, text=h)
+            self.strat_table.column(col, width=w, anchor="w" if col in ("sp", "note") else "e", stretch=(col == "note"))
+        self.strat_table.pack(fill="x")
+        self.strat_fig, self.strat_canvas = self._canvas(page)
+
+    def _draw_strat(self):
+        fig = self.strat_fig
+        fig.clear()
+        self.strat_table.delete(*self.strat_table.get_children())
+        species = self.active() if self.species else []
+        if not species:
+            ax = fig.add_subplot(111)
+            ax.axis("off")
+            ax.text(0.5, 0.5, "Each species is placed at its average depth from just two angles (normal and "
+                              "oblique).\nBar position = depth, bar width = relative amount. Misleading if a species "
+                              "sits in two layers.", ha="center", va="center", color=MUTED, fontsize=11)
+            self.strat_canvas.draw_idle()
+            return
+        try:
+            max_angle = self._number("max_angle", "Max angle")
+            a, b = float(self.strat_a.get()), float(self.strat_b.get())
+        except ValueError:
+            max_angle, a, b = DP.DEFAULT_MAX_ANGLE, None, None
+        rows = DP.stratification(species, a, b, self.strat_all.get(), max_angle)
+        ax = fig.add_subplot(111)
+        valid = [r for r in rows if r.z_nm is not None and r.amount_pct is not None]
+        span = max([abs(r.z_nm) for r in valid] + [1.0])
+        for sp, r in zip(species, rows):
+            if r.z_nm is None or r.amount_pct is None:
+                continue
+            colour = PALETTE[self.species.index(sp) % len(PALETTE)]
+            width = max(0.5 * span * r.amount_pct / 100.0, 0.02 * span)
+            ax.add_patch(Rectangle((r.z_nm - width / 2, 0), width, 1.0, color=colour, alpha=0.55, lw=0))
+            ax.text(r.z_nm, 1.03, sp.name, rotation=90, ha="center", va="bottom", fontsize=8, color=colour)
+            if r.z_se_nm:
+                ax.errorbar([r.z_nm], [0.5], xerr=[r.z_se_nm], color="black", capsize=3, lw=1)
+        ax.set_xlim(min(-0.05 * span, min([r.z_nm for r in valid] + [0]) - 0.1 * span), 1.15 * span)
+        ax.set_ylim(0, 1.45)
+        ax.set_yticks([])
+        ax.set_xlabel("Average depth below the surface (nm)")
+        ax.set_title("Stratification: bar position = average depth, bar width = relative amount", fontsize=10)
+        ax.grid(alpha=0.3, axis="x")
+        fig.subplots_adjust(left=0.05, right=0.98, top=0.9, bottom=0.12)
+        self.strat_canvas.draw_idle()
+        for r in rows:
+            self.strat_table.insert("", "end", values=(
+                r.name, _fmt(r.z_nm, "{:.2f}"), _fmt(r.z_se_nm, "{:.2f}"), _fmt(r.amount_pct, "{:.1f}"),
+                _fmt(r.ratio, "{:.3f}"), _fmt(r.curved_t, "{:.1f}"), r.note))
 
     # --- trend plot ---------------------------------------------------------------------------------------
     def _draw(self):

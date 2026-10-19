@@ -99,6 +99,87 @@ class CoLocation(unittest.TestCase):
         self.assertEqual(rows[0].similar, [])
 
 
+class Stratification(unittest.TestCase):
+    SEC = 1.0 / np.cos(np.radians(ANGLES))
+
+    def _delta(self, name, z, lam, n, rsf=1.0, sigma=None):
+        sp = DP.Species(name, "r", ANGLES.copy(), n * rsf * np.exp(-z * self.SEC / lam), lam_nm=lam, rsf=rsf, ke_ev=1000.0)
+        if sigma:
+            sp.sigma = sp.intensity * sigma
+        return sp
+
+    def test_two_angles_recover_the_depth_and_the_amount_of_thin_layers(self):
+        sps = [self._delta("A", 0.5, 3.0, 10.0), self._delta("B", 2.0, 3.0, 40.0, rsf=0.5),
+               self._delta("C", 5.0, 3.5, 25.0)]
+        rows = DP.stratification(sps, 0.0, 60.0)
+        for r, z, n in zip(rows, (0.5, 2.0, 5.0), (10.0, 40.0, 25.0)):
+            self.assertAlmostEqual(r.z_nm, z, places=9)
+            self.assertAlmostEqual(r.amount, n, places=9)
+        self.assertAlmostEqual(sum(r.amount_pct for r in rows), 100.0)
+        self.assertAlmostEqual(rows[1].amount_pct, 100 * 40 / 75, places=9)
+
+    def test_fitting_every_angle_gives_the_same_exact_answer(self):
+        sps = [self._delta("A", 0.5, 3.0, 10.0), self._delta("B", 2.0, 3.0, 40.0)]
+        for r, z in zip(DP.stratification(sps, use_all=True, max_angle=80), (0.5, 2.0)):
+            self.assertAlmostEqual(r.z_nm, z, places=9)
+
+    def test_the_default_angles_are_the_smallest_and_the_one_nearest_67_5_within_the_limit(self):
+        sp = self._delta("A", 1.0, 3.0, 10.0)
+        at_60 = math.exp(-1.0 * (2.0 - 1.0) / 3.0)
+        at_75 = math.exp(-1.0 * (1 / math.cos(math.radians(75)) - 1) / 3.0)
+        self.assertAlmostEqual(DP.stratification([sp], max_angle=80)[0].ratio, at_60, places=9)    # 60 and 75 tie: the lower
+        self.assertAlmostEqual(DP.stratification([sp], max_angle=70)[0].ratio, at_60, places=9)
+        self.assertAlmostEqual(DP.stratification([sp], theta_b=75.0, max_angle=80)[0].ratio, at_75, places=9)
+
+    def test_a_species_that_rises_with_angle_is_at_the_surface_and_says_so(self):
+        sp = DP.Species("S", "r", ANGLES.copy(), np.exp(+0.4 * self.SEC), lam_nm=3.0)
+        r = DP.stratification([sp], 0.0, 60.0)[0]
+        self.assertLess(r.z_nm, 0)
+        self.assertIn("rises with angle", r.note)
+
+    def test_a_species_in_two_layers_is_flagged_as_curved(self):
+        two = DP.Species("T", "r", ANGLES.copy(), np.exp(-0.5 * self.SEC / 3) + np.exp(-6.0 * self.SEC / 3), lam_nm=3.0)
+        r = DP.stratification([two], 0.0, 60.0)[0]
+        self.assertGreater(abs(r.curved_t), 3)
+        self.assertIn("more than one layer", r.note)
+        self.assertTrue(0.5 < r.z_nm < 6.0)                                  # reported at one average depth, in between
+        single = DP.stratification([self._delta("S", 2.0, 3.0, 1.0)], 0.0, 60.0)[0]
+        self.assertEqual(single.note, "")
+
+    def test_a_species_without_two_usable_angles_is_reported_not_crashed(self):
+        sp = self._delta("A", 1.0, 3.0, 10.0)
+        sp.intensity[:] = -1.0
+        sp.intensity[0] = 5.0
+        r = DP.stratification([sp])[0]
+        self.assertIsNone(r.z_nm)
+        self.assertIn("two usable angles", r.note)
+        same = DP.stratification([self._delta("A", 1.0, 3.0, 10.0)], 0.0, 0.0)[0]
+        self.assertIsNotNone(same.z_nm)                                      # the nearest OTHER angle is used
+
+    def test_the_depth_uncertainty_from_counting_statistics_covers_the_truth(self):
+        rng = np.random.default_rng(11)
+        hits, trials = 0, 300
+        for _ in range(trials):
+            clean = self._delta("A", 2.0, 3.0, 5000.0)
+            counts = rng.poisson(clean.intensity)
+            sp = DP.Species("A", "r", ANGLES.copy(), counts.astype(float), sigma=np.sqrt(counts), lam_nm=3.0)
+            r = DP.stratification([sp], 0.0, 60.0)[0]
+            hits += abs(r.z_nm - 2.0) <= 2.0 * r.z_se_nm
+        self.assertGreater(hits / trials, 0.90)
+
+    def test_dividing_by_cos_theta_removes_a_geometry_factor_common_to_all_species(self):
+        cos = np.cos(np.radians(ANGLES))
+        sps = [self._delta("A", 0.5, 3.0, 10.0), self._delta("B", 2.0, 3.0, 40.0)]
+        for sp in sps:
+            sp.intensity = sp.intensity * cos                                # the analyser-defined-area projection
+        wrong = DP.stratification(sps, 0.0, 60.0)
+        right = DP.stratification(DP.apply_geometry(sps, 1.0), 0.0, 60.0)
+        self.assertGreater(wrong[0].z_nm - 0.5, 0.5)
+        for r, z in zip(right, (0.5, 2.0)):
+            self.assertAlmostEqual(r.z_nm, z, places=9)
+        self.assertIs(DP.apply_geometry(sps, 0.0)[0], sps[0])               # power 0 changes nothing
+
+
 class SpeciesFromFits(unittest.TestCase):
     def test_states_become_species_with_the_exact_stored_areas(self):
         ser = _series(S.two_state_series(d_nm=1.5, fitted=True))

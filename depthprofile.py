@@ -142,6 +142,25 @@ def species_from_region(series: Sequence[Tuple[float, object]], angle_offset: fl
 # Surrey Trend Plot statistics
 # ---------------------------------------------------------------------------------------------------------------
 
+def apply_geometry(species: Sequence[Species], power: float) -> List[Species]:
+    """
+    Copies of the species with every intensity (and its uncertainty) divided by cos(theta) ** power. Absolute intensities
+    carry any change of the analysed area or acceptance with tilt, which is common to all species: power 0 when the X-ray
+    spot defines the analysed area and nothing changes with angle, 1 when the analyser defines it (the analysed area on
+    the sample then grows as 1 / cos(theta) in the plane of the sample but the collected signal is projected, so the
+    intensity falls as cos(theta)). Ratios of species at one angle, as on the ARXPS tab, do not need this.
+    """
+    out = []
+    for sp in species:
+        if not power:
+            out.append(sp)
+            continue
+        g = np.cos(np.radians(sp.angles)) ** power
+        out.append(Species(sp.name, sp.region, sp.angles, sp.intensity / g,
+                           None if sp.sigma is None else sp.sigma / g, sp.lam_nm, sp.rsf, sp.ke_ev, sp.source, sp.key))
+    return out
+
+
 @dataclass
 class TrendRow:
     name: str
@@ -215,3 +234,108 @@ def normalised(sp: Species) -> np.ndarray:
     y = np.asarray(sp.intensity, dtype=float)
     pos = np.flatnonzero(y > 0)
     return y / y[pos[0]] if len(pos) else y
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Stratification (average depth and amount of each species)
+# ---------------------------------------------------------------------------------------------------------------
+#
+# A thin layer of areal amount n at depth z gives I(theta) = S n exp(-z sec(theta) / lambda), S the sensitivity factor.
+# Two angles a and b therefore give its depth and amount:
+#
+#     R = I_b / I_a = exp(-z (sec_b - sec_a) / lambda)     ->   z = -lambda ln R / (sec_b - sec_a)
+#     n = I_a exp(z sec_a / lambda) / S                      (the intensity corrected for the overlying attenuation)
+#
+# A species spread over several depths is reported at one average depth, so a species in two distinct layers is
+# misleading; curvature of ln I against sec(theta) is the warning.
+
+@dataclass
+class StratRow:
+    name: str
+    z_nm: Optional[float]
+    z_se_nm: Optional[float]
+    amount: Optional[float]             # areal amount, arbitrary units (intensity / S, corrected for attenuation)
+    amount_pct: Optional[float] = None  # share of the total amount of the species used
+    ratio: Optional[float] = None       # I_b / I_a (pair mode)
+    curved_t: Optional[float] = None    # significance of the curvature of ln I against sec(theta)
+    note: str = ""
+
+
+def curvature_t(angles: Sequence[float], intensity: Sequence[float], max_angle: float = DEFAULT_MAX_ANGLE
+                ) -> Optional[float]:
+    """t statistic of the quadratic term when ln I is fitted against sec(theta) (None with fewer than 4 points)."""
+    th, y = np.asarray(angles, dtype=float), np.asarray(intensity, dtype=float)
+    ok = (y > 0) & (th <= max_angle) & (th >= 0) & (th < 90)
+    if ok.sum() < 4:
+        return None
+    x, ly = 1.0 / np.cos(np.radians(th[ok])), np.log(y[ok])
+    x0 = x - x.mean()
+    design = np.column_stack([np.ones_like(x0), x0, x0 ** 2])
+    coef, res, rank, _ = np.linalg.lstsq(design, ly, rcond=None)
+    if rank < 3:
+        return None
+    dof = len(x) - 3
+    resid = ly - design @ coef
+    s2 = float(resid @ resid) / dof
+    if s2 < 1e-24:                                     # an exact straight line: nothing to be curved about
+        return 0.0
+    cov = s2 * np.linalg.inv(design.T @ design)
+    se = math.sqrt(max(cov[2, 2], 0.0))
+    return float(coef[2] / se) if se > 0 else (0.0 if abs(coef[2]) < 1e-12 else math.inf)
+
+
+def stratification(species: Sequence[Species], theta_a: Optional[float] = None, theta_b: Optional[float] = None,
+                   use_all: bool = False, max_angle: float = DEFAULT_MAX_ANGLE, curved_limit: float = 3.0
+                   ) -> List[StratRow]:
+    """
+    Average depth and relative amount of each species. Pair mode (default) uses two emission angles: `theta_a` (default the
+    smallest angle) and `theta_b` (default the angle nearest 67.5 degrees that is within `max_angle`). `use_all` fits
+    ln I against sec(theta) over every angle instead. The uncertainty of the depth comes from the counting statistics
+    (pair mode, when the areas have one) or from the scatter about the line (all angles).
+    """
+    rows: List[StratRow] = []
+    for sp in species:
+        th = np.asarray(sp.angles, dtype=float)
+        usable = np.flatnonzero((th <= max_angle) & (sp.intensity > 0))
+        if len(usable) < 2:
+            rows.append(StratRow(sp.name, None, None, None, note="needs positive intensities at two usable angles"))
+            continue
+        t_curve = curvature_t(sp.angles, sp.intensity, max_angle)
+        warn = ""
+        if t_curve is not None and abs(t_curve) > curved_limit:
+            warn = "ln I is curved against sec θ: the species may be in more than one layer"
+        if use_all:
+            slope, se, icpt, _, n = trend_fit(sp.angles, sp.intensity, max_angle)
+            if slope is None:
+                rows.append(StratRow(sp.name, None, None, None, note="not enough angles"))
+                continue
+            z = -sp.lam_nm * slope
+            amount = math.exp(icpt) / sp.rsf
+            rows.append(StratRow(sp.name, z, (sp.lam_nm * se if se is not None else None), amount, None, None, t_curve,
+                                 warn if z >= 0 else "intensity rises with angle: species lies at the surface "
+                                 "(depth is negative)"))
+            continue
+        ia = int(usable[np.argmin(np.abs(th[usable] - (theta_a if theta_a is not None else th[usable].min())))])
+        want_b = theta_b if theta_b is not None else 67.5
+        cand = [i for i in usable if i != ia]
+        ib = int(min(cand, key=lambda i: abs(th[i] - want_b)))
+        sec_a, sec_b = 1.0 / math.cos(math.radians(th[ia])), 1.0 / math.cos(math.radians(th[ib]))
+        if abs(sec_b - sec_a) < 1e-9:
+            rows.append(StratRow(sp.name, None, None, None, note="the two angles are the same"))
+            continue
+        ratio = float(sp.intensity[ib] / sp.intensity[ia])
+        z = -sp.lam_nm * math.log(ratio) / (sec_b - sec_a)
+        z_se = None
+        if sp.sigma is not None and sp.intensity[ia] > 0 and sp.intensity[ib] > 0:
+            rel = math.hypot(sp.sigma[ia] / sp.intensity[ia], sp.sigma[ib] / sp.intensity[ib])
+            z_se = sp.lam_nm * rel / abs(sec_b - sec_a)
+        amount = float(sp.intensity[ia]) * math.exp(z * sec_a / sp.lam_nm) / sp.rsf
+        note = warn
+        if ratio > 1.0 and sec_b > sec_a:
+            note = "intensity rises with angle: species lies at the surface (depth is negative)"
+        rows.append(StratRow(sp.name, z, z_se, amount, None, ratio, t_curve, note))
+    total = sum(r.amount for r in rows if r.amount is not None and r.amount > 0)
+    for r in rows:
+        if r.amount is not None and total > 0:
+            r.amount_pct = 100.0 * max(r.amount, 0.0) / total
+    return rows

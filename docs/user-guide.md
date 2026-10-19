@@ -289,6 +289,19 @@ distributed together. The table gives each line's slope, its error, the scatter 
 (minus lambda times the slope), and which other species run parallel. Use it as a first look before choosing a model: it
 tells you how many distinct depth distributions the data hold and how noisy they are.
 
+### Stratification
+
+Choose two angles (normal emission and one oblique angle, about 67.5 degrees, are the usual pair; the default is the smallest
+angle and the one nearest 67.5 degrees within the maximum angle) and each species is placed at its **average depth**, with
+its **relative amount**, drawn as bars: position is depth and width is amount. The table adds the error of the depth from the
+counting statistics, the intensity ratio, and a curvature statistic that warns when a species looks to sit in more than one
+layer. *Use every angle* fits all the angles instead.
+
+Notes: a finite overlayer is not a thin buried layer, so its intensity rises with angle and the tab reports it at the surface
+with a note; a substrate that goes on forever is reported at its information depth. In the synthetic fitted sample the
+silicon substrate state is placed **1.50 nm** deep, which is the thickness of the oxide above it. If every species falls with
+angle faster than a thin layer can explain, set *Geometry* to *divide by cos theta* on the Data card.
+
 ## Which tab should I use?
 
 | Your situation | Use |

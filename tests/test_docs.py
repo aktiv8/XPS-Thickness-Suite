@@ -186,6 +186,24 @@ class ClaimsMatchTheCode(unittest.TestCase):
         self.assertEqual([r.tilt for r in res.rows if not r.used], [75.0])
         self.assertAlmostEqual(res.line[0], 0.0, delta=2 * res.line[2])
 
+    def test_stratification_worked_example(self):
+        import depthprofile as DP
+        sample = os.path.join(DOCS, "sample", "si-native-oxide-arxps-fitted.vms")
+        series = VM.read(sample).series("Si2p Scan", "exp1")[None]
+        sp = {s.name: s for s in DP.species_from_fits(series)}
+        for s in sp.values():
+            s.lam_nm = A.tpp2m_imfp_nm(s.ke_ev, 2.196, 60.08, 16, 8.9)       # the tab's default attenuation length
+        rows = {r.name: r for r in DP.stratification(list(sp.values()), 0.0, 60.0)}
+        guide = _read("user-guide.md")
+        self.assertIn(f"**{rows['Si El'].z_nm:.2f} nm** deep", guide)
+        self.assertAlmostEqual(rows["Si El"].z_nm, 1.5, delta=0.01)
+        self.assertLess(rows["Si Ox"].z_nm, 0)                              # a finite overlayer rises with angle
+
+    def test_the_geometry_example_in_methods(self):
+        methods = _read("methods.md")
+        self.assertIn("2.6 nm deep without it", methods)
+        self.assertIn("0.6 nm deep with it", methods)
+
     def test_the_sample_files_are_what_the_generator_writes(self):
         import tempfile
         spec = importlib.util.spec_from_file_location("make_sample_data", os.path.join(DOCS, "make_sample_data.py"))

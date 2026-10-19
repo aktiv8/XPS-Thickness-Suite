@@ -532,6 +532,34 @@ class DepthTabSmoke(unittest.TestCase):
         self.assertIn("Emission angle", ax.get_xlabel())
         self.assertIn("ln( I )", ax.get_ylabel())
 
+    def test_stratification_places_the_substrate_state_below_the_overlayer_state(self):
+        app, tab = self._tab(S.two_state_series(d_nm=1.5, fitted=True))
+        self.assertEqual((tab.strat_a.get(), tab.strat_b.get()), ("0", "60"))        # 75 is above the 70 degree limit
+        rows = {tab.strat_table.item(i, "values")[0]: tab.strat_table.item(i, "values")
+                for i in tab.strat_table.get_children()}
+        self.assertEqual(set(rows), {"Si El", "Si Ox"})
+        self.assertGreater(float(rows["Si El"][1]), float(rows["Si Ox"][1]))         # the substrate is deeper
+        self.assertAlmostEqual(sum(float(r[3]) for r in rows.values()), 100.0, delta=0.2)
+        self.assertEqual(len(tab.strat_fig.axes), 1)
+
+    def test_the_stratification_angles_and_modes_can_be_changed(self):
+        app, tab = self._tab(S.two_state_series(fitted=True))
+        tab.strat_b.set("45")
+        tab.strat_all.set(True)
+        tab._draw_strat()
+        vals = [tab.strat_table.item(i, "values") for i in tab.strat_table.get_children()]
+        self.assertEqual(len(vals), 2)
+        self.assertEqual(vals[0][4], "-")                                             # no single ratio in the fit mode
+
+    def test_the_geometry_option_divides_the_intensities_by_cos_theta(self):
+        app, tab = self._tab(S.two_state_series(fitted=True))
+        before = tab.species[0].intensity.copy()
+        tab.v["geometry"].set(DT.GEO_COS)
+        tab.reload()
+        import numpy as np
+        want = before / np.cos(np.radians(tab.species[0].angles))
+        self.assertTrue(np.allclose(tab.species[0].intensity, want))
+
     def test_it_can_take_the_file_from_the_arxps_tab(self):
         app = _make_app(self)
         app.arxps.load_file(self._write(S.two_state_series(fitted=True)))
