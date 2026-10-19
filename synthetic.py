@@ -135,6 +135,29 @@ def two_peak_series(d_nm: float = 1.5, lam_nm: float = 3.0, so: float = 2.93, ss
     return out
 
 
+def layered_series(d_nm: Sequence[float], species: Sequence[dict], tilts: Sequence[float] = DEFAULT_TILTS,
+                   hv: float = 1486.68, noise: bool = False, seed: int = 1, scale: float = 1000.0,
+                   step: float = 0.1, fwhm: float = 1.0) -> List[VM.Block]:
+    """
+    A layer stack on a substrate, one region (a single Gaussian peak) per species, with exactly the intensity the Gries
+    layer model predicts. `species` are dicts with name, be (eV), layer (0-based from the top, -1 for the substrate) and
+    optionally lam (nm, default 3). Intensities are in counts per second x eV and `scale` sets the signal level.
+    """
+    import depthlayers as DL
+    rng = np.random.default_rng(seed)
+    out = []
+    for tilt in tilts:
+        for spec in species:
+            lam = spec.get("lam", 3.0)
+            area = scale * float(DL.layer_intensity([tilt], list(d_nm), spec["layer"], [lam] * len(d_nm))[0])
+            be = np.arange(spec["be"] - 8.0, spec["be"] + 8.0 + step / 2, step)
+            sig = area * sim.pseudo_voigt(be, spec["be"], fwhm, 0.0)
+            bg = sim.shirley_background(sig, step=0.04 * area, base=0.01 * scale / 10.0)
+            blk = _block(spec["name"] + " Scan", spec["name"], hv, be, sig + bg, tilt, None, noise, rng)
+            out.append(blk)
+    return out
+
+
 def write_sample(path: str, fitted: bool = False, **kwargs) -> None:
     """The docs sample files: a noisy synthetic Si/SiO2 tilt series, optionally with a CasaXPS-style fit stored in it."""
     blocks = two_state_series(noise=True, lorentz=0.2, fitted=fitted, **kwargs)

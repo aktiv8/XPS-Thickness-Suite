@@ -57,6 +57,9 @@ only where they were checked against the paper itself or a bibliographic record.
     comments of a VAMAS file.
 18. aktiv8, eXPoSe SpectraDeck, https://github.com/aktiv8/eXPoSe-Spectra-Deck. The comment parser for CasaXPS fits in
     `casa.py` is ported from it.
+19. W. H. Gries, An evaluation of the capabilities of photon and electron spectroscopies for nondestructive quantitative
+    measurements on analyte depth profiles by the angle-resolved signal ratio method, *J. Vac. Sci. Technol. A* **7**,
+    1655-1662 (1989). DOI [10.1116/1.576066](https://doi.org/10.1116/1.576066). The signal-ratio idea behind the Layers panel.
 
 ## Citing
 

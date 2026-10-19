@@ -20,6 +20,7 @@ from matplotlib.patches import Rectangle
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 import arxps as AR
+import depthlayers as DL
 import depthprofile as DP
 import vamas as VM
 from gui_common import ACCENT, BADGE, CARD, MUTED, Tooltip, _to_float
@@ -27,6 +28,9 @@ from gui_common import ACCENT, BADGE, CARD, MUTED, Tooltip, _to_float
 NO_AZIMUTH = "None (single azimuth)"
 SRC_FITS = "Fitted states (CasaXPS)"
 SRC_REGIONS = "Whole regions (Shirley)"
+SRC_AUTO = "Fits where available, else regions"
+MAX_LAYERS = 4
+SUB_LABEL = "Sub"
 GEO_NONE = "none (X-ray spot sets the area)"
 GEO_COS = "divide by cos θ (analyser sets it)"
 # a colour-blind-safe cycle (Okabe and Ito) with a few extras
@@ -53,7 +57,7 @@ class DepthTab(ttk.Frame):
         self.v = {k: tk.StringVar() for k in ("angle_src", "azim_src", "azimuth", "offset", "max_angle", "source", "geometry")}
         self.v["offset"].set("0")
         self.v["max_angle"].set(f"{DP.DEFAULT_MAX_ANGLE:g}")
-        self.v["source"].set(SRC_FITS)
+        self.v["source"].set(SRC_AUTO)
         self.v["geometry"].set(GEO_NONE)
         self.transmission = tk.BooleanVar(value=True)
         self.x_mode = tk.StringVar(value="sec")
@@ -61,6 +65,12 @@ class DepthTab(ttk.Frame):
         self.show_fits = tk.BooleanVar(value=True)
         self.strat_a, self.strat_b = tk.StringVar(), tk.StringVar()
         self.strat_all = tk.BooleanVar(value=False)
+        self.n_layers = tk.StringVar(value="2")
+        self.layer_d = [tk.StringVar(value="1.0") for _ in range(MAX_LAYERS)]
+        self.layer_vars = []                 # per species: StringVar holding "1".."K" or SUB_LABEL
+        self.layer_fit = None                # depthlayers.LayerFit of the last fit / scan
+        self.layer_note = tk.StringVar(value="")
+        self._setting = False                # True while the program (not the user) changes the thickness boxes
         self.file_label = tk.StringVar(value="No file loaded")
         self.status = tk.StringVar(value="Open a VAMAS tilt series (or use the one in the ARXPS tab).")
         self._after = None
@@ -124,7 +134,8 @@ class DepthTab(ttk.Frame):
         self.az_cb.bind("<<ComboboxSelected>>", lambda e: self.reload())
         self.src_cb = self._combo(card, self.v["source"], 6, "Species from:", "Fitted states: every chemical state of "
                                   "the CasaXPS fits stored in the file. Whole regions: each region integrated with a "
-                                  "Shirley background (any file).", [SRC_FITS, SRC_REGIONS])
+                                  "Shirley background (any file). Fits where available: the states of regions that "
+                                  "have a fit, whole regions for the rest.", [SRC_AUTO, SRC_FITS, SRC_REGIONS])
         for cb in (self.angle_cb, self.azim_cb, self.src_cb):
             cb.bind("<<ComboboxSelected>>", lambda e: self.reload())
         self.geo_cb = self._combo(card, self.v["geometry"], 7, "Geometry:", "Any change of the analysed area with tilt "
@@ -224,7 +235,7 @@ class DepthTab(ttk.Frame):
         self.v["angle_src"].set(VM.ANGLE_SOURCES[angle] if angle else "")
         self.v["azim_src"].set(VM.ANGLE_SOURCES[azim] if azim and azim in present else NO_AZIMUTH)
         has_fits = any(AR.fit_regions(self._series(r)) for r in self._spectral_regions() if self._series(r))
-        self.v["source"].set(SRC_FITS if has_fits else SRC_REGIONS)
+        self.v["source"].set(SRC_AUTO if has_fits else SRC_REGIONS)
         self.reload()
 
     def _key(self, label):
@@ -266,10 +277,12 @@ class DepthTab(ttk.Frame):
                 series = self._series(region)
                 if len(series) < 2:
                     continue
-                if self.v["source"].get() == SRC_FITS:
-                    for name in AR.fit_regions(series):
+                source = self.v["source"].get()
+                fit_names = AR.fit_regions(series) if source in (SRC_FITS, SRC_AUTO) else []
+                if fit_names:
+                    for name in fit_names:
                         species += DP.species_from_fits(series, offset, tr, name)
-                else:
+                elif source != SRC_FITS:
                     species.append(DP.species_from_region(series, offset, True, tr))
             if not species:
                 raise ValueError("No species found: " + ("none of the regions holds a CasaXPS fit (try Whole regions)"
@@ -287,6 +300,7 @@ class DepthTab(ttk.Frame):
         self.species = species
         self._fill_angle_choices()
         self._fill_species()
+        self._default_layers()
         self.status.set(f"{len(species)} species at {len(species[0].angles)} angles; set each λ for your material.")
         self.refresh()
 
@@ -319,6 +333,7 @@ class DepthTab(ttk.Frame):
         self._after = None
         self._draw()
         self._draw_strat()
+        self._draw_layers()
 
     # --- right-hand side ------------------------------------------------------------------------------
     def _build_right(self):
@@ -330,6 +345,7 @@ class DepthTab(ttk.Frame):
         self.plot_nb = nb
         self._build_trend_page(nb)
         self._build_strat_page(nb)
+        self._build_layers_page(nb)
         return frame
 
     def _canvas(self, parent):
@@ -462,6 +478,246 @@ class DepthTab(ttk.Frame):
             self.strat_table.insert("", "end", values=(
                 r.name, _fmt(r.z_nm, "{:.2f}"), _fmt(r.z_se_nm, "{:.2f}"), _fmt(r.amount_pct, "{:.1f}"),
                 _fmt(r.ratio, "{:.3f}"), _fmt(r.curved_t, "{:.1f}"), r.note))
+
+    # --- layers (Gries) -----------------------------------------------------------------------------------
+    def _k(self):
+        try:
+            return max(1, min(MAX_LAYERS, int(self.n_layers.get())))
+        except ValueError:
+            return 2
+
+    def _layer_labels(self):
+        return [str(i + 1) for i in range(self._k())] + [SUB_LABEL]
+
+    def _default_layers(self):
+        """First guess: layer of each species by average depth, deepest in the substrate."""
+        self.layer_fit = None
+        self.layer_vars = []
+        if not self.species:
+            return
+        try:
+            guess = DL.default_assignment(self.species, self._k(), self._max_angle())
+        except ValueError:
+            guess = [0] * len(self.species)
+        labels = self._layer_labels()
+        self.layer_vars = [tk.StringVar(value=SUB_LABEL if g == DL.SUBSTRATE_LAYER else labels[min(g, self._k() - 1)])
+                           for g in guess]
+        for v in self.layer_vars:
+            v.trace_add("write", lambda *a: self._layers_changed())
+        self._rebuild_layer_grid()
+
+    def _max_angle(self):
+        try:
+            return self._number("max_angle", "Max angle")
+        except ValueError:
+            return DP.DEFAULT_MAX_ANGLE
+
+    def _build_layers_page(self, nb):
+        page = ttk.Frame(nb, style="Card.TFrame", padding=4)
+        nb.add(page, text="Layers (Gries)")
+        bar = ttk.Frame(page, style="Card.TFrame")
+        bar.pack(side="top", fill="x")
+        ttk.Label(bar, text="Layers above the substrate:", style="Card.TLabel").pack(side="left")
+        cb = ttk.Combobox(bar, textvariable=self.n_layers, values=[str(i) for i in range(1, MAX_LAYERS + 1)],
+                          state="readonly", width=3)
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda e: self._default_layers() or self._draw_layers())
+        for text, cmd, tip in (("Auto-assign", self._auto_assign, "Put each species in a layer by its average depth: the "
+                                "shallowest in layer 1, the deepest in the substrate. Change any row afterwards."),
+                               ("Fit thicknesses", self.fit_layers_now, "Least-squares thicknesses from the shape of each "
+                                "species' intensity against angle (no sensitivity factors needed)."),
+                               ("Scan ranges", self.scan_layers_now, "For each layer, the range of thickness that fits "
+                                "within the noise (the others re-fitted). A wide range means the data cannot say.")):
+            b = ttk.Button(bar, text=text, command=cmd)
+            b.pack(side="left", padx=4)
+            Tooltip(b, tip)
+        ttk.Label(bar, textvariable=self.layer_note, style="CardMuted.TLabel", wraplength=420, justify="left").pack(
+            side="left", padx=8)
+        mid = ttk.Frame(page, style="Card.TFrame")
+        mid.pack(side="top", fill="x", pady=(4, 0))
+        self.layer_grid = ttk.Frame(mid, style="Card.TFrame")
+        self.layer_grid.pack(side="left", anchor="n")
+        lower = ttk.Frame(page, style="Card.TFrame")
+        lower.pack(side="bottom", fill="x", pady=(6, 0))
+        cols = ("layer", "species", "d", "range", "note")
+        heads = ("Layer", "Species", "Thickness (nm)", "Range that fits (nm)", "Note")
+        widths = (60, 220, 100, 140, 330)
+        self.layer_table = ttk.Treeview(lower, columns=cols, show="headings", height=4)
+        for col, h, w in zip(cols, heads, widths):
+            self.layer_table.heading(col, text=h)
+            self.layer_table.column(col, width=w, anchor="w" if col in ("species", "note") else "e",
+                                    stretch=(col == "note"))
+        self.layer_table.pack(fill="x")
+        self.layer_fig, self.layer_canvas = self._canvas(page)
+
+    def _rebuild_layer_grid(self):
+        self._setting = True
+        try:
+            self._build_layer_grid()
+        finally:
+            self._setting = False
+
+    def _build_layer_grid(self):
+        for w in self.layer_grid.winfo_children():
+            w.destroy()
+        k = self._k()
+        ttk.Label(self.layer_grid, text="Thickness (nm)", style="ColHead.TLabel").grid(row=0, column=0, columnspan=3,
+                                                                                       sticky="w")
+        for i in range(k):
+            ttk.Label(self.layer_grid, text=f"Layer {i + 1}", style="Card.TLabel").grid(row=i + 1, column=0, sticky="w")
+            sc = ttk.Scale(self.layer_grid, from_=0.0, to=10.0, orient="horizontal", length=130,
+                           command=lambda v, j=i: self._scale_moved(j, v))
+            sc.set(_to_float(self.layer_d[i].get()) or 1.0)
+            sc.grid(row=i + 1, column=1, padx=4)
+            e = ttk.Entry(self.layer_grid, textvariable=self.layer_d[i], width=6)
+            e.grid(row=i + 1, column=2)
+            self.layer_d[i].trace_add("write", lambda *a: self._layers_changed())
+            Tooltip(e, "Layer thickness in nm: type it or drag the slider and watch the curves.")
+        ttk.Label(self.layer_grid, text="  ", style="Card.TLabel").grid(row=0, column=3)
+        ttk.Label(self.layer_grid, text="Species in layer", style="ColHead.TLabel").grid(row=0, column=4, columnspan=2,
+                                                                                         sticky="w")
+        for i, (sp, var) in enumerate(zip(self.species, self.layer_vars)):
+            ttk.Label(self.layer_grid, text=sp.name, style="Card.TLabel").grid(row=i + 1, column=4, sticky="w", padx=(0, 6))
+            ttk.Combobox(self.layer_grid, textvariable=var, values=self._layer_labels(), state="readonly",
+                         width=5).grid(row=i + 1, column=5, pady=1)
+
+    def _scale_moved(self, k, value):
+        if self._setting:
+            return
+        self.layer_d[k].set(f"{float(value):.2f}")
+
+    def _auto_assign(self):
+        self._default_layers()
+        self._draw_layers()
+
+    def _layers_changed(self):
+        """The user changed a thickness or an assignment: any stored fit and its ranges no longer apply."""
+        if not self._setting:
+            self.layer_fit = None
+        self._schedule()
+
+    def _set_thicknesses(self, values):
+        self._setting = True
+        try:
+            for i, v in enumerate(values):
+                self.layer_d[i].set(f"{v:.2f}")
+        finally:
+            self._setting = False
+
+    def _assignment(self, species):
+        """Layer index (0-based, or SUBSTRATE_LAYER) of each of the given species."""
+        index = {id(sp): v for sp, v in zip(self.species, self.layer_vars)}
+        out = []
+        for sp in species:
+            label = index[id(sp)].get() if id(sp) in index else SUB_LABEL
+            out.append(DL.SUBSTRATE_LAYER if label == SUB_LABEL else min(int(label) - 1, self._k() - 1))
+        return out
+
+    def _thicknesses(self):
+        d = []
+        for i in range(self._k()):
+            v = _to_float(self.layer_d[i].get())
+            d.append(max(v, 0.0) if v is not None else 0.0)
+        return d
+
+    def fit_layers_now(self):
+        species = self.active()
+        if not species:
+            return
+        try:
+            fit = DL.fit_layers(species, self._assignment(species), self._k(), d0=self._thicknesses(),
+                                max_angle=self._max_angle())
+        except ValueError as exc:
+            self.layer_note.set(str(exc))
+            return
+        self.layer_fit = fit
+        self._set_thicknesses(fit.d_nm)
+        self.layer_note.set(f"Fitted: chi-squared per point {_fmt(fit.chi2_red, '{:.2f}')}. " + " ".join(fit.warnings))
+        self._rebuild_layer_grid()
+        self._draw_layers()
+
+    def scan_layers_now(self):
+        species = self.active()
+        if not species:
+            return
+        self.fit_layers_now()
+        if self.layer_fit is None:
+            return
+        self.layer_note.set("Scanning the thickness ranges…")
+        self.update_idletasks()
+        DL.scan_ranges(self.layer_fit, species, self._k(), max_angle=self._max_angle())
+        self.layer_note.set(f"Fitted: chi-squared per point {_fmt(self.layer_fit.chi2_red, '{:.2f}')}; the ranges are "
+                            "where chi-squared stays within the noise.")
+        self._draw_layers()
+
+    def _draw_layers(self):
+        fig = self.layer_fig
+        fig.clear()
+        self.layer_table.delete(*self.layer_table.get_children())
+        species = self.active() if self.species else []
+        if not species or not self.layer_vars:
+            ax = fig.add_subplot(111)
+            ax.axis("off")
+            ax.text(0.5, 0.5, "Put each species in a layer, then drag the thickness sliders until the predicted curves "
+                              "follow the points,\nor press Fit thicknesses. Only the shape of each peak against angle "
+                              "is used: no sensitivity factors.", ha="center", va="center", color=MUTED, fontsize=11)
+            self.layer_canvas.draw_idle()
+            return
+        assignment = self._assignment(species)
+        d = self._thicknesses()
+        max_angle = self._max_angle()
+        ax1, ax2 = fig.subplots(1, 2, gridspec_kw={"width_ratios": [3, 1.4]})
+        th = np.linspace(0.0, 80.0, 81)
+        for sp, layer in zip(species, assignment):
+            colour = PALETTE[self.species.index(sp) % len(PALETTE)]
+            meas = DL.measured_normalised(sp, max_angle)
+            if meas is None:
+                continue
+            angles, y, sig, _ = meas
+            ax1.errorbar(angles, y, yerr=sig, fmt="o", color=colour, ms=5, capsize=2, label=sp.name)
+            lam = [sp.lam_nm] * len(d)
+            curve = DL.layer_intensity(th, d, layer, lam)
+            ref = DL.layer_intensity([angles[0]], d, layer, lam)[0]
+            if ref > 1e-12:
+                ax1.plot(th, curve / ref, "-", color=colour, lw=1.2)
+        ax1.set_xlabel("Emission angle θ (°)")
+        ax1.set_ylabel("Intensity / intensity at the first angle")
+        ax1.set_title("Measured (points) and predicted (lines)", fontsize=10)
+        ax1.grid(alpha=0.3)
+        ax1.legend(fontsize=8, loc="best")
+        # the layer stack
+        names = {k: [] for k in list(range(self._k())) + [DL.SUBSTRATE_LAYER]}
+        for sp, layer in zip(species, assignment):
+            names[layer].append(sp.name)
+        top, sub_h = 0.0, max(0.3 * max(sum(d), 1.0), 0.5)
+        cmap = ["#cfe3f6", "#fde2c4", "#d4efdf", "#f1d6e6"]
+        for k, thick in enumerate(d):
+            ax2.add_patch(Rectangle((0, top), 1, thick, facecolor=cmap[k % 4], edgecolor="black", lw=0.8))
+            label = f"{k + 1}: {thick:.2f} nm" + ("\n" + ", ".join(names[k]) if names[k] else "")
+            ax2.text(0.5, top + thick / 2, label, ha="center", va="center", fontsize=8)
+            top += thick
+        ax2.add_patch(Rectangle((0, top), 1, sub_h, facecolor="#e5e7eb", edgecolor="black", lw=0.8, hatch="//"))
+        ax2.text(0.5, top + sub_h / 2, "Substrate\n" + ", ".join(names[DL.SUBSTRATE_LAYER]), ha="center", va="center",
+                 fontsize=8, bbox=dict(facecolor="white", alpha=0.8, lw=0))
+        ax2.set_xlim(0, 1)
+        ax2.set_ylim(top + sub_h, 0)
+        ax2.set_xticks([])
+        ax2.set_ylabel("Depth (nm)")
+        ax2.set_title("Layer stack", fontsize=10)
+        fig.subplots_adjust(left=0.07, right=0.98, top=0.9, bottom=0.12, wspace=0.25)
+        self.layer_canvas.draw_idle()
+        fit = self.layer_fit
+        for k, thick in enumerate(d):
+            rng = fit.ranges[k] if fit is not None and k < len(fit.ranges) and fit.ranges[k] else None
+            note = ""
+            if rng is not None and rng[1] - rng[0] > 2.0 * max(thick, 0.2):
+                note = "poorly determined: the data allow a wide range"
+            self.layer_table.insert("", "end", values=(
+                k + 1, ", ".join(names[k]) or "-", f"{thick:.2f}",
+                f"{rng[0]:.2f} to {rng[1]:.2f}" if rng else "-", note))
+        chi, npts = DL.gries_chi2(d, species, assignment, max_angle)
+        self.layer_table.insert("", "end", values=("Sub", ", ".join(names[DL.SUBSTRATE_LAYER]) or "-", "-", "-",
+                                                    f"chi-squared per point {chi / npts:.2f}" if npts else ""))
 
     # --- trend plot ---------------------------------------------------------------------------------------
     def _draw(self):

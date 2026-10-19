@@ -116,6 +116,7 @@ class Citations(unittest.TestCase):
                     "10.1002/(SICI)1096-9918(199706)25:6<430::AID-SIA254>3.0.CO;2-7",   # Cumpson, Seah 1997
                     "10.1103/PhysRevB.5.4709",             # Shirley 1972
                     "10.1002/sia.740130202",               # Dench, Hazell, Seah 1988 (VAMAS)
+                    "10.1116/1.576066",                    # Gries 1989 (angle-resolved signal ratio)
                     "10.1002/1096-9918(200006)29:6<403::AID-SIA884>3.0.CO;2-8"):   # Cumpson 2000
             self.assertTrue(doi in refs, f"references.md lacks the DOI {doi}")
         self.assertTrue("XPS topofactors: determining overlayer thickness on particles and" in refs)

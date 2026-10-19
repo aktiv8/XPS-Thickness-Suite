@@ -456,6 +456,45 @@ curvature of $\ln I$ against $\sec\theta$ (the t statistic of the quadratic term
 intensity rises with angle lies at the surface and gets a negative depth with a note. A substrate that extends to infinite
 depth is not a thin layer: its signal is reported at its information depth and the curvature warning usually fires.
 
+### Layers (Gries signal ratios)
+
+For a stack of layers $1\ldots K$ with thicknesses $d_k$ on a substrate, the intensity of a species that sits in layer $j$
+(unit concentration, attenuation length $\lambda_{j}$ in each layer) is attenuated by every layer above it:
+
+```math
+I_j(\theta) = \exp\left(-\sum_{m<j}\frac{d_m}{\lambda_m\cos\theta}\right)\left[1-\exp\left(-\frac{d_j}{\lambda_j\cos\theta}\right)\right]
+```
+
+and a substrate species gives $\exp\left(-\sum_{m=1}^{K} d_m/(\lambda_m\cos\theta)\right)$. W. Gries [19] noted that if every
+measured curve and every prediction is divided by its own value at normal emission, **no sensitivity factors are needed**: only
+the shape of each peak's intensity against angle is compared, and the thicknesses are adjusted until the predicted curves follow
+the points. The tab draws the predicted curves over the measured ones with a slider for each thickness, so you can do that by
+eye, and can also fit them: the thicknesses minimise
+
+```math
+\chi^2 = \sum_i\sum_{\theta}\left(\frac{y_i(\theta)-p_i(\theta)}{\sigma_i(\theta)}\right)^2
+```
+
+with $y_i$ the measured and $p_i$ the predicted normalised curve, using a bounded simplex search started from several
+points. The uncertainties come from the counting statistics (3 percent of the value when they are unknown).
+
+**Range of validity.** For each layer the thickness is held at each value on a grid while the others are re-fitted, and the range
+where $\chi^2$ stays within one unit of its minimum is reported (scaled up when the reduced $\chi^2$ is above 1, so
+unrealistically small errors do not give unrealistically narrow ranges). A wide range means the data cannot say: information fades
+with depth, and the deeper layers are always less well determined than the shallow ones.
+
+Limits and cautions:
+
+- Each species must belong to **one** layer (or the substrate). A region that mixes several states, such as a whole Si 2p
+  spectrum holding silicon and its oxide, does not belong in the stack: use the fitted states.
+- The model assumes uniform, flat layers and a known geometry. A tilt-dependent change of the analysed area (see Geometry
+  above) acts on every curve; the cosine option is a guess, and a poor fit (a reduced $\chi^2$ far above 1) is the signal that
+  something is missing from the model. On a K-Alpha tilt series of a silicon wafer with a carbon layer, an oxide and silicon the
+  stack did not fit (reduced $\chi^2$ in the thousands, even with the geometry exponent free), so for a single
+  oxide thickness the ratio of two states on the ARXPS tab, which cancels all common factors, is the more robust route.
+- The tab uses one attenuation length per species in every layer. In reality it depends on the material it passes
+  through, so using each layer's own value would change the result.
+
 ## Spectrum simulation
 
 The Simulated spectrum pane draws what a given thickness would look like. It is an **estimate, not a fit**.

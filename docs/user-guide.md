@@ -302,6 +302,19 @@ with a note; a substrate that goes on forever is reported at its information dep
 silicon substrate state is placed **1.50 nm** deep, which is the thickness of the oxide above it. If every species falls with
 angle faster than a thin layer can explain, set *Geometry* to *divide by cos theta* on the Data card.
 
+### Layers (Gries)
+
+Put each species in a layer, from 1 at the top to *Sub* for the substrate (Auto-assign ranks them by average depth), and the
+tab draws the predicted intensity against angle over the measured points, with a stack diagram beside it. Drag a thickness
+slider, or type a value, and the curves move: adjust the top layer first, then the next, until they follow the points. Only the
+shape of each peak against angle is used, so no sensitivity factors are needed. *Fit thicknesses* does the adjustment by least
+squares and *Scan ranges* shows, for each layer, the range of thickness that fits within the noise: a wide range for a deep
+layer means the data cannot say. The note under the table gives chi-squared per point; a value far above 1 means the model
+(uniform layers, the chosen geometry) does not describe the data.
+
+Each species has to belong to one layer, so use *Fitted states* for regions that hold several states. Species can come from
+fits where they exist and whole regions elsewhere (the default).
+
 ## Which tab should I use?
 
 | Your situation | Use |

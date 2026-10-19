@@ -493,7 +493,7 @@ class DepthTabSmoke(unittest.TestCase):
 
     def test_a_fitted_file_gives_one_species_per_state_and_the_exact_trend(self):
         app, tab = self._tab(S.two_state_series(d_nm=1.5, fitted=True))
-        self.assertEqual(tab.v["source"].get(), DT.SRC_FITS)
+        self.assertEqual(tab.v["source"].get(), DT.SRC_AUTO)
         self.assertEqual([sp.name for sp in tab.species], ["Si El", "Si Ox"])
         self.assertAlmostEqual(tab.species[0].lam_nm, 3.89, delta=0.05)          # TPP-2M default for an oxide-like matrix
         rows = self._table(tab)
@@ -559,6 +559,65 @@ class DepthTabSmoke(unittest.TestCase):
         import numpy as np
         want = before / np.cos(np.radians(tab.species[0].angles))
         self.assertTrue(np.allclose(tab.species[0].intensity, want))
+
+    def _layers_tab(self):
+        blocks = S.layered_series([0.8, 1.5], [dict(name="C 1s", be=285.0, layer=0), dict(name="O 1s", be=532.0, layer=1),
+                                               dict(name="Al 2p", be=73.0, layer=-1)])
+        app, tab = self._tab(blocks)
+        tab.v["max_angle"].set("80")
+        for sp in tab.species:
+            sp.lam_nm = 3.0
+        for row in tab.rows:
+            row["lam"].set("3.0")
+        tab.transmission.set(False)
+        tab.reload()
+        for row in tab.rows:
+            row["lam"].set("3.0")
+        return app, tab
+
+    def test_layers_default_assignment_follows_depth_and_the_fit_recovers_the_stack(self):
+        app, tab = self._layers_tab()
+        self.assertEqual([v.get() for v in tab.layer_vars], ["1", "2", DT.SUB_LABEL])
+        tab.fit_layers_now()
+        self.assertAlmostEqual(float(tab.layer_d[0].get()), 0.8, delta=0.1)
+        self.assertAlmostEqual(float(tab.layer_d[1].get()), 1.5, delta=0.15)
+        self.assertEqual(len(tab.layer_fig.axes), 2)                      # curves and the layer stack
+        rows = [tab.layer_table.item(i, "values") for i in tab.layer_table.get_children()]
+        self.assertEqual([r[0] for r in rows], ["1", "2", "Sub"])
+        self.assertEqual(rows[0][1], "C 1s")
+
+    def test_scanning_the_ranges_fills_the_table_and_editing_a_thickness_clears_them(self):
+        app, tab = self._layers_tab()
+        tab.scan_layers_now()
+        rows = [tab.layer_table.item(i, "values") for i in tab.layer_table.get_children()]
+        self.assertIn(" to ", rows[0][3])
+        self.assertIn(" to ", rows[1][3])
+        tab.layer_d[0].set("2.0")                                          # the user moves a thickness: the ranges are stale
+        self.assertIsNone(tab.layer_fit)
+
+    def test_changing_the_number_of_layers_rebuilds_the_assignment(self):
+        app, tab = self._layers_tab()
+        tab.n_layers.set("3")
+        tab._default_layers()
+        self.assertEqual([v.get() for v in tab.layer_vars], ["1", "2", DT.SUB_LABEL])
+        self.assertIn("3", tab._layer_labels())
+        tab.n_layers.set("1")
+        tab._default_layers()
+        self.assertEqual([v.get() for v in tab.layer_vars], ["1", "1", DT.SUB_LABEL])
+
+    def test_fit_without_a_species_in_any_layer_says_so(self):
+        app, tab = self._layers_tab()
+        for v in tab.layer_vars:
+            v.set(DT.SUB_LABEL)
+        tab.fit_layers_now()
+        self.assertIn("at least one species to a layer", tab.layer_note.get())
+
+    def test_fits_where_available_mixes_fitted_states_and_whole_regions(self):
+        blocks = S.two_state_series(fitted=True) + S.layered_series([0.8], [dict(name="C 1s", be=285.0, layer=0)])
+        app, tab = self._tab(blocks)
+        self.assertEqual(tab.v["source"].get(), DT.SRC_AUTO)
+        self.assertEqual(sorted(sp.name for sp in tab.species), ["C 1s", "Si El", "Si Ox"])
+        self.assertEqual(sorted(sp.source for sp in tab.species), ["fit", "fit", "region"])
 
     def test_it_can_take_the_file_from_the_arxps_tab(self):
         app = _make_app(self)
