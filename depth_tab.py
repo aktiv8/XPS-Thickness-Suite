@@ -1046,11 +1046,9 @@ class DepthTab(ttk.Frame):
             return list(idx)
         try:
             layout, _, _ = DL.default_layout(sps, len(idx), self._max_angle())
-            rows = DP.stratification(sps, max_angle=self._max_angle())
         except ValueError:
             return list(idx)
-        key = {k: (1e9 if layout[k] == DL.SUBSTRATE_LAYER else (rows[k].z_nm if rows[k].z_nm is not None else 1e8))
-               for k in range(len(idx))}
+        key = {k: (1e9 if layout[k] == DL.SUBSTRATE_LAYER else layout[k]) for k in range(len(idx))}
         return [idx[k] for k in sorted(range(len(idx)), key=lambda k: key[k])]
 
     def _mur_apply_use(self, reorder=False):

@@ -263,6 +263,11 @@ def _fit_share_trends(species: Sequence[Species], max_angle: float) -> dict:
     return out
 
 
+def is_adventitious_carbon(sp: Species) -> bool:
+    """A plain C 1s region (not one of its fitted components): the surface contamination layer."""
+    return sp.source == "region" and sp.name.replace(" ", "").lower() == "c1s"
+
+
 def default_layout(species: Sequence[Species], n_layers: int, max_angle: float = DEFAULT_MAX_ANGLE):
     """
     A first guess of the stack: (assignment, excluded, notes). `assignment[i]` is the layer of species i (0-based from the top,
@@ -273,6 +278,8 @@ def default_layout(species: Sequence[Species], n_layers: int, max_angle: float =
       because a semi-infinite substrate has no single depth.
     * Whole-region species that are strongly curved against sec(theta) mix several depths (for example Si 2s holds the
       substrate and its oxide) and are left out when the substrate came from the fits: use their fitted states instead.
+    * A plain C 1s region is taken to be adventitious carbon and goes in layer 1 whatever its angle dependence says: the
+      depth ranking cannot see a patchy or non-uniform carbon layer (its curve is often U-shaped), and carbon is the surface.
     * The rest are ranked by average depth, the shallowest in layer 1.
     """
     rows = stratification(species, max_angle=max_angle)
@@ -292,7 +299,13 @@ def default_layout(species: Sequence[Species], n_layers: int, max_angle: float =
     else:
         sub = max(range(len(species)), key=lambda i: depth[i]) if species else None
     out = [0] * len(species)
-    others = sorted((i for i in range(len(species)) if i != sub), key=lambda i: depth[i])
+    carbon = [i for i, sp in enumerate(species) if i != sub and is_adventitious_carbon(sp)]
+    for i in carbon:
+        if sub is not None and rows[i].z_nm is not None:
+            tt = rows[i].curved_t
+            notes.append(f"{species[i].name} is placed on top as adventitious carbon; its angle dependence alone ranks it at "
+                         f"{rows[i].z_nm:.1f} nm" + (f" (curvature t = {abs(tt):.0f})." if tt is not None else "."))
+    others = sorted((i for i in range(len(species)) if i != sub), key=lambda i: (i not in carbon, depth[i]))
     for rank, i in enumerate(others):
         out[i] = min(rank, n_layers - 1)
     if sub is not None:

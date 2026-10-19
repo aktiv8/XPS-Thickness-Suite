@@ -165,6 +165,16 @@ class DefaultLayout(unittest.TestCase):
         self.assertTrue(any("Si 2s" in n and "fitted states" in n for n in notes))
         self.assertEqual(sorted(a for a in assign if a != SUB)[0], 0)      # the others fill layers from the top
 
+    def test_a_plain_c1s_region_goes_on_top_even_when_its_angle_dependence_ranks_it_deep(self):
+        d = [0.8, 1.5]
+        deep_c = DP.Species("C 1s", "C1s Scan", ANGLES.copy(), np.exp(-0.2 * self.SEC / 3), lam_nm=3.0, source="region")
+        sps = [_species("O", 0, d), deep_c, _species("Al", SUB, d)]
+        assign, _, notes = DL.default_layout(sps, 2, 80)
+        self.assertEqual(assign, [1, 0, SUB])                              # carbon first, then oxygen, Al is the substrate
+        self.assertTrue(any("adventitious carbon" in n for n in notes))
+        fitted = DP.Species("C 1s C-C", "C1s Scan", ANGLES.copy(), deep_c.intensity, lam_nm=3.0, source="fit")
+        self.assertFalse(DL.is_adventitious_carbon(fitted))                # a fitted component is not "the surface layer"
+
     def test_without_fitted_states_the_deepest_species_is_the_substrate_and_nothing_is_excluded(self):
         d = [0.8, 1.5]
         sps = [_species("Al", SUB, d), _species("C", 0, d), _species("O", 1, d)]

@@ -319,7 +319,7 @@ fits where they exist and whole regions elsewhere (the default).
 most with angle (a buried state falls, an overlayer rises); without them it is the species with the greatest average depth,
 which is crude because a substrate that goes on forever has no single depth. Whole-region species that mix several depths, such
 as Si 2s (substrate plus oxide), start unticked with a note, because they do not belong in a stack: use their fitted states. The
-rest are ranked by average depth, the shallowest in layer 1. Always check the assignment.
+rest are ranked by average depth, the shallowest in layer 1, except that a plain C 1s region is assumed to be adventitious carbon and starts in layer 1 (the depth ranking cannot see a patchy carbon layer). Always check the assignment.
 
 ### Profile (regularised)
 
