@@ -304,7 +304,7 @@ angle faster than a thin layer can explain, set *Geometry* to *divide by cos the
 
 ### Layers (Gries)
 
-Put each species in a layer, from 1 at the top to *Sub* for the substrate (Auto-assign ranks them by average depth), and the
+Put each species in a layer, from 1 at the top to *Sub* for the substrate, and the
 tab draws the predicted intensity against angle over the measured points, with a stack diagram beside it. Drag a thickness
 slider, or type a value, and the curves move: adjust the top layer first, then the next, until they follow the points. Only the
 shape of each peak against angle is used, so no sensitivity factors are needed. *Fit thicknesses* does the adjustment by least
@@ -314,6 +314,12 @@ layer means the data cannot say. The note under the table gives chi-squared per 
 
 Each species has to belong to one layer, so use *Fitted states* for regions that hold several states. Species can come from
 fits where they exist and whole regions elsewhere (the default).
+
+*Auto-assign* makes a first guess. When there are fitted states the substrate is the one whose share of the fitted area falls
+most with angle (a buried state falls, an overlayer rises); without them it is the species with the greatest average depth,
+which is crude because a substrate that goes on forever has no single depth. Whole-region species that mix several depths, such
+as Si 2s (substrate plus oxide), start unticked with a note, because they do not belong in a stack: use their fitted states. The
+rest are ranked by average depth, the shallowest in layer 1. Always check the assignment.
 
 ### Profile (regularised)
 

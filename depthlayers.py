@@ -237,14 +237,69 @@ def scan_ranges(fit: LayerFit, species: Sequence[Species], n_layers: int, d_max:
     return fit
 
 
-def default_assignment(species: Sequence[Species], n_layers: int, max_angle: float = DEFAULT_MAX_ANGLE) -> List[int]:
+MIXED_CURVATURE_T = 5.0         # a whole-region species this curved is a mixture of depths, not one layer
+
+
+def _fit_share_trends(species: Sequence[Species], max_angle: float) -> dict:
     """
-    A first guess for the layer of each species: rank them by average depth (stratification), shallowest in layer 1 and
-    the deepest in the substrate; with more species than layers the extra ones share the deepest finite layer.
+    For species taken from CasaXPS fits: how each one's share of its region's fitted area changes from the lowest to the
+    highest usable angle (negative = falls with angle, as a buried substrate state does), keyed by species index.
+    """
+    out = {}
+    regions = {}
+    for i, sp in enumerate(species):
+        if sp.source == "fit":
+            regions.setdefault(sp.region, []).append(i)
+    for idx in regions.values():
+        th = np.asarray(species[idx[0]].angles, dtype=float)
+        total = sum(np.asarray(species[i].intensity, dtype=float) for i in idx)
+        ok = np.flatnonzero((th <= max_angle) & (total > 0))
+        if len(ok) < 2:
+            continue
+        lo, hi = ok[0], ok[-1]
+        for i in idx:
+            y = np.asarray(species[i].intensity, dtype=float)
+            out[i] = float(y[hi] / total[hi] - y[lo] / total[lo])
+    return out
+
+
+def default_layout(species: Sequence[Species], n_layers: int, max_angle: float = DEFAULT_MAX_ANGLE):
+    """
+    A first guess of the stack: (assignment, excluded, notes). `assignment[i]` is the layer of species i (0-based from the top,
+    SUBSTRATE_LAYER for the substrate) and `excluded` the indices best left out.
+
+    * The substrate is the fitted state whose share of the fitted area falls most with angle (a buried state falls, an
+      overlayer rises); only without any fitted state is it the species with the greatest average depth, which is crude
+      because a semi-infinite substrate has no single depth.
+    * Whole-region species that are strongly curved against sec(theta) mix several depths (for example Si 2s holds the
+      substrate and its oxide) and are left out when the substrate came from the fits: use their fitted states instead.
+    * The rest are ranked by average depth, the shallowest in layer 1.
     """
     rows = stratification(species, max_angle=max_angle)
-    order = sorted(range(len(species)), key=lambda i: rows[i].z_nm if rows[i].z_nm is not None else 1e9)
+    depth = [r.z_nm if r.z_nm is not None else 1e9 for r in rows]
+    trends = _fit_share_trends(species, max_angle)
+    falling = {i: t for i, t in trends.items() if t < -0.02}
+    notes: List[str] = []
+    excluded = set()
+    if falling:
+        sub = min(falling, key=falling.get)
+        for i, sp in enumerate(species):
+            t = rows[i].curved_t
+            if sp.source == "region" and t is not None and abs(t) > MIXED_CURVATURE_T:
+                excluded.add(i)
+                notes.append(f"{sp.name} is left out of the default stack: it mixes several depths (curvature t = {abs(t):.0f}); "
+                             "use its fitted states instead.")
+    else:
+        sub = max(range(len(species)), key=lambda i: depth[i]) if species else None
     out = [0] * len(species)
-    for rank, i in enumerate(order):
-        out[i] = SUBSTRATE_LAYER if rank == len(order) - 1 else min(rank, n_layers - 1)
-    return out
+    others = sorted((i for i in range(len(species)) if i != sub), key=lambda i: depth[i])
+    for rank, i in enumerate(others):
+        out[i] = min(rank, n_layers - 1)
+    if sub is not None:
+        out[sub] = SUBSTRATE_LAYER
+    return out, excluded, notes
+
+
+def default_assignment(species: Sequence[Species], n_layers: int, max_angle: float = DEFAULT_MAX_ANGLE) -> List[int]:
+    """The layer of each species from `default_layout` (the exclusions are ignored here)."""
+    return default_layout(species, n_layers, max_angle)[0]

@@ -141,6 +141,44 @@ class Helpers(unittest.TestCase):
         self.assertIsNone(DL.measured_normalised(_species("C", 0, [0.8]), -1.0))
 
 
+class DefaultLayout(unittest.TestCase):
+    SEC = 1.0 / np.cos(np.radians(ANGLES))
+
+    def _fit_species(self):
+        total = 1000.0
+        x = 1.5 / (3.0 * np.cos(np.radians(ANGLES)))
+        el = DP.Species("El", "Si2p Scan", ANGLES.copy(), total * np.exp(-x), lam_nm=3.0, source="fit")
+        ox = DP.Species("Ox", "Si2p Scan", ANGLES.copy(), 0.55 * total * (1 - np.exp(-x)), lam_nm=3.0, source="fit")
+        return el, ox
+
+    def test_the_substrate_is_the_fitted_state_that_falls_with_angle_not_just_the_deepest_signal(self):
+        el, ox = self._fit_species()
+        # a whole-region species that is bulk-like and curved, and a little deeper than the fitted substrate state
+        mixed = DP.Species("Si 2s", "Si2s Scan", ANGLES.copy(), np.exp(-0.5 * self.SEC / 3) + np.exp(-6.0 * self.SEC / 3),
+                           lam_nm=3.0, source="region")
+        clean = DP.Species("C 1s", "C1s Scan", ANGLES.copy(), np.exp(-0.4 * self.SEC / 3), lam_nm=3.0, source="region")
+        sps = [clean, ox, el, mixed]
+        assign, excluded, notes = DL.default_layout(sps, 2, 80)
+        self.assertEqual(assign[2], SUB)                                   # El
+        self.assertIn(3, excluded)                                         # the mixed Si 2s is left out
+        self.assertNotIn(0, excluded)
+        self.assertTrue(any("Si 2s" in n and "fitted states" in n for n in notes))
+        self.assertEqual(sorted(a for a in assign if a != SUB)[0], 0)      # the others fill layers from the top
+
+    def test_without_fitted_states_the_deepest_species_is_the_substrate_and_nothing_is_excluded(self):
+        d = [0.8, 1.5]
+        sps = [_species("Al", SUB, d), _species("C", 0, d), _species("O", 1, d)]
+        assign, excluded, notes = DL.default_layout(sps, 2, 80)
+        self.assertEqual(assign, [SUB, 0, 1])
+        self.assertEqual((excluded, notes), (set(), []))
+
+    def test_a_curved_region_species_is_kept_when_there_are_no_fits_to_replace_it(self):
+        two = DP.Species("T", "r", ANGLES.copy(), np.exp(-0.5 * (1 / np.cos(np.radians(ANGLES))) / 3)
+                         + np.exp(-6.0 * (1 / np.cos(np.radians(ANGLES))) / 3), lam_nm=3.0, source="region")
+        other = _species("C", 0, [0.8])
+        self.assertEqual(DL.default_layout([two, other], 1, 80)[1], set())
+
+
 class LayeredSynthetic(unittest.TestCase):
     def test_the_synthetic_layer_stack_round_trips_through_regions(self):
         blocks = S.layered_series([0.8, 1.5], [dict(name="C 1s", be=285.0, layer=0), dict(name="O 1s", be=532.0, layer=1),

@@ -687,6 +687,15 @@ class DepthTabSmoke(unittest.TestCase):
             tab.reload()
         self.assertEqual(tab.species, [])
 
+    def test_with_fits_the_substrate_state_is_the_default_substrate_and_a_mixed_region_starts_unticked(self):
+        import numpy as np
+        blocks = S.two_state_series(fitted=True) + S.layered_series([0.8, 9.0], [dict(name="Mix 2s", be=150.0, layer=1)])
+        app, tab = self._tab(blocks)
+        names = [sp.name for sp in tab.species]
+        sub = [n for n, v in zip(names, tab.layer_vars) if v.get() == DT.SUB_LABEL]
+        self.assertEqual(sub, ["Si El"])
+        self.assertTrue(tab.rows[names.index("Si El")]["use"].get())
+
     def test_it_can_take_the_file_from_the_arxps_tab(self):
         app = _make_app(self)
         app.arxps.load_file(self._write(S.two_state_series(fitted=True)))

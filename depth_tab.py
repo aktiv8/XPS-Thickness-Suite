@@ -514,9 +514,13 @@ class DepthTab(ttk.Frame):
         if not self.species:
             return
         try:
-            guess = DL.default_assignment(self.species, self._k(), self._max_angle())
+            guess, excluded, notes = DL.default_layout(self.species, self._k(), self._max_angle())
         except ValueError:
-            guess = [0] * len(self.species)
+            guess, excluded, notes = [0] * len(self.species), set(), []
+        for i, row in enumerate(self.rows):                  # species that would only confuse the stack start unticked
+            row["use"].set(i not in excluded)
+        if notes:
+            self.layer_note.set(" ".join(notes))
         labels = self._layer_labels()
         self.layer_vars = [tk.StringVar(value=SUB_LABEL if g == DL.SUBSTRATE_LAYER else labels[min(g, self._k() - 1)])
                            for g in guess]
