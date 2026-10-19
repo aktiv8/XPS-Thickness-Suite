@@ -22,6 +22,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 import arxps as AR
 import depthlayers as DL
 import depthprofile as DP
+import depthreg as DR
 import vamas as VM
 from gui_common import ACCENT, BADGE, CARD, MUTED, Tooltip, _to_float
 
@@ -54,11 +55,12 @@ class DepthTab(ttk.Frame):
         self.file = None
         self.species = []                    # depthprofile.Species, as loaded
         self.rows = []                       # per species: dict(use, lam, rsf) tk variables
-        self.v = {k: tk.StringVar() for k in ("angle_src", "azim_src", "azimuth", "offset", "max_angle", "source", "geometry")}
+        self.v = {k: tk.StringVar() for k in ("angle_src", "azim_src", "azimuth", "offset", "max_angle", "source", "geometry", "al_factor")}
         self.v["offset"].set("0")
         self.v["max_angle"].set(f"{DP.DEFAULT_MAX_ANGLE:g}")
         self.v["source"].set(SRC_AUTO)
         self.v["geometry"].set(GEO_NONE)
+        self.v["al_factor"].set("1.0")
         self.transmission = tk.BooleanVar(value=True)
         self.x_mode = tk.StringVar(value="sec")
         self.normalise = tk.BooleanVar(value=True)
@@ -71,6 +73,13 @@ class DepthTab(ttk.Frame):
         self.layer_fit = None                # depthlayers.LayerFit of the last fit / scan
         self.layer_note = tk.StringVar(value="")
         self._setting = False                # True while the program (not the user) changes the thickness boxes
+        self.prof_depth, self.prof_n = tk.StringVar(value="12"), tk.StringVar(value="20")
+        self.prof_auto, self.prof_logalpha = tk.BooleanVar(value=True), tk.StringVar(value="3.0")
+        self.prof_nonneg, self.prof_frac = tk.BooleanVar(value=False), tk.BooleanVar(value=False)
+        self.prof_bands = tk.BooleanVar(value=True)
+        self.prof_note = tk.StringVar(value="")
+        self.prof_bulk = []                  # per species: (mode StringVar, z_c StringVar)
+        self.profiles = []                   # depthreg.ProfileFit of the last calculation
         self.file_label = tk.StringVar(value="No file loaded")
         self.status = tk.StringVar(value="Open a VAMAS tilt series (or use the one in the ARXPS tab).")
         self._after = None
@@ -150,6 +159,10 @@ class DepthTab(ttk.Frame):
         Tooltip(ck, "Divide by the transmission function at each peak's kinetic energy so peaks at different energies "
                     "can be compared.")
         ttk.Button(card, text="Reload species", command=self.reload).grid(row=8, column=2, columnspan=2, sticky="e")
+        self._entry(card, "al_factor", 9, "AL / IMFP:", "Starting attenuation lengths are TPP-2M inelastic mean free paths. "
+                    "Attenuation lengths, which include some elastic scattering, are typically 10 to 30 percent shorter "
+                    "(Cumpson and Seah 1997): set 0.8 for instance, then press Reload species. You can still edit each "
+                    "lambda in the table.")
         return card
 
     # --- species card ---------------------------------------------------------------------------------
@@ -271,6 +284,9 @@ class DepthTab(ttk.Frame):
             return
         try:
             offset = self._number("offset", "Offset")
+            factor = self._number("al_factor", "AL / IMFP")
+            if factor <= 0:
+                raise ValueError("AL / IMFP must be positive.")
             tr = self.transmission.get()
             species = []
             for region in self._spectral_regions():
@@ -295,12 +311,13 @@ class DepthTab(ttk.Frame):
             self._draw()
             return
         for sp in species:
-            sp.lam_nm = float(self.lam_default(sp.ke_ev)) if sp.ke_ev else 2.0
+            sp.lam_nm = (float(self.lam_default(sp.ke_ev)) if sp.ke_ev else 2.0) * factor
         species = DP.apply_geometry(species, 1.0 if self.v["geometry"].get() == GEO_COS else 0.0)
         self.species = species
         self._fill_angle_choices()
         self._fill_species()
         self._default_layers()
+        self._default_bulk()
         self.status.set(f"{len(species)} species at {len(species[0].angles)} angles; set each λ for your material.")
         self.refresh()
 
@@ -346,6 +363,7 @@ class DepthTab(ttk.Frame):
         self._build_trend_page(nb)
         self._build_strat_page(nb)
         self._build_layers_page(nb)
+        self._build_profile_page(nb)
         return frame
 
     def _canvas(self, parent):
@@ -718,6 +736,160 @@ class DepthTab(ttk.Frame):
         chi, npts = DL.gries_chi2(d, species, assignment, max_angle)
         self.layer_table.insert("", "end", values=("Sub", ", ".join(names[DL.SUBSTRATE_LAYER]) or "-", "-", "-",
                                                     f"chi-squared per point {chi / npts:.2f}" if npts else ""))
+
+    # --- profile (regularisation) -------------------------------------------------------------------------
+    BULK_LABELS = {"free": "free", "constant": "constant below z", "zero": "zero below z"}
+
+    def _default_bulk(self):
+        self.profiles = []
+        self.prof_bulk = [(tk.StringVar(value=self.BULK_LABELS["free"]), tk.StringVar(value="8")) for _ in self.species]
+        self._rebuild_bulk_grid()
+
+    def _build_profile_page(self, nb):
+        page = ttk.Frame(nb, style="Card.TFrame", padding=4)
+        nb.add(page, text="Profile (regularised)")
+        bar = ttk.Frame(page, style="Card.TFrame")
+        bar.pack(side="top", fill="x")
+        for text, var, width, tip in (("Max depth (nm):", self.prof_depth, 5, "How deep the profile is allowed to go."),
+                                      ("Depth points:", self.prof_n, 4, "Number of depth slabs (5 to 60).")):
+            ttk.Label(bar, text=text, style="Card.TLabel").pack(side="left", padx=(0, 2))
+            e = ttk.Entry(bar, textvariable=var, width=width)
+            e.pack(side="left", padx=(0, 8))
+            Tooltip(e, tip)
+        ck = ttk.Checkbutton(bar, text="Auto α", variable=self.prof_auto, style="Card.TCheckbutton",
+                             command=self._calc_profile)
+        ck.pack(side="left")
+        Tooltip(ck, "Choose the smoothing strength from the data: the smoothest profile that still fits within the "
+                    "counting noise. Untick to set log10 of α by hand.")
+        e = ttk.Entry(bar, textvariable=self.prof_logalpha, width=5)
+        e.pack(side="left", padx=(2, 8))
+        Tooltip(e, "log10 of the smoothing strength (relative units) used when Auto α is off: larger is smoother.")
+        for text, var, tip in (("Non-negative", self.prof_nonneg, "Force every concentration to be zero or positive."),
+                               ("Atomic fraction", self.prof_frac, "Show the species as shares that add up to 1 at each "
+                                                                  "depth."),
+                               ("Noise bands", self.prof_bands, "Draw ±1 standard deviation from the counting noise "
+                                                                "(it does not include the smoothing bias).")):
+            c = ttk.Checkbutton(bar, text=text, variable=var, style="Card.TCheckbutton", command=self._calc_profile)
+            c.pack(side="left", padx=(0, 6))
+            Tooltip(c, tip)
+        b = ttk.Button(bar, text="Calculate profile", command=self._calc_profile)
+        b.pack(side="left", padx=6)
+        ttk.Label(page, textvariable=self.prof_note, style="CardMuted.TLabel", wraplength=900, justify="left").pack(
+            side="top", fill="x", pady=(2, 0))
+        mid = ttk.Frame(page, style="Card.TFrame")
+        mid.pack(side="top", fill="x", pady=(2, 0))
+        self.bulk_grid = ttk.Frame(mid, style="Card.TFrame")
+        self.bulk_grid.pack(side="left", anchor="n")
+        lower = ttk.Frame(page, style="Card.TFrame")
+        lower.pack(side="bottom", fill="x", pady=(6, 0))
+        cols = ("sp", "alpha", "chi", "bulk", "peak", "note")
+        heads = ("Species", "log10 α", "χ² per point", "Bulk", "Peak conc.", "Note")
+        widths = (90, 70, 90, 140, 90, 420)
+        self.prof_table = ttk.Treeview(lower, columns=cols, show="headings", height=4)
+        for col, h, w in zip(cols, heads, widths):
+            self.prof_table.heading(col, text=h)
+            self.prof_table.column(col, width=w, anchor="w" if col in ("sp", "bulk", "note") else "e",
+                                   stretch=(col == "note"))
+        self.prof_table.pack(fill="x")
+        self.prof_fig, self.prof_canvas = self._canvas(page)
+
+    def _rebuild_bulk_grid(self):
+        for w in self.bulk_grid.winfo_children():
+            w.destroy()
+        ttk.Label(self.bulk_grid, text="Prior knowledge: where a species is constant or absent (nm)",
+                  style="ColHead.TLabel").grid(row=0, column=0, columnspan=7, sticky="w")
+        for i, (sp, (mode, zc)) in enumerate(zip(self.species, self.prof_bulk)):
+            r, c = 1 + i // 2, 3 * (i % 2)
+            ttk.Label(self.bulk_grid, text=sp.name, style="Card.TLabel").grid(row=r, column=c, sticky="w", padx=(0, 4))
+            cb = ttk.Combobox(self.bulk_grid, textvariable=mode, values=list(self.BULK_LABELS.values()), state="readonly",
+                              width=15)
+            cb.grid(row=r, column=c + 1, padx=2, pady=1)
+            Tooltip(cb, "free: no assumption. constant below z: the species has one concentration below depth z (a bulk "
+                        "species). zero below z: the species is not present below depth z (a surface species).")
+            ttk.Entry(self.bulk_grid, textvariable=zc, width=5).grid(row=r, column=c + 2, padx=(2, 14))
+
+    def _bulk_of(self, sp):
+        i = self.species.index(sp)
+        mode, zc = self.prof_bulk[i] if i < len(self.prof_bulk) else (None, None)
+        label = mode.get() if mode else self.BULK_LABELS["free"]
+        key = next((k for k, v in self.BULK_LABELS.items() if v == label), "free")
+        return key, (_to_float(zc.get()) if zc else None)
+
+    def _calc_profile(self):
+        species = self.active() if self.species else []
+        self.profiles = []
+        if not species:
+            self._draw_profile()
+            return
+        try:
+            depth = float(self.prof_depth.get())
+            n = int(float(self.prof_n.get()))
+            if not (5 <= n <= 60) or depth <= 0:
+                raise ValueError("Max depth must be positive and the number of depth points between 5 and 60.")
+        except ValueError as exc:
+            self.prof_note.set(str(exc) if "Max depth" in str(exc) else "Enter numbers for the depth and the points.")
+            self._draw_profile()
+            return
+        alpha = None
+        if not self.prof_auto.get():
+            la = _to_float(self.prof_logalpha.get())
+            alpha = 10.0 ** la if la is not None else None
+        notes = []
+        for sp in species:
+            bulk, zc = self._bulk_of(sp)
+            try:
+                self.profiles.append((sp, DR.fit_profile(sp, depth, n, alpha, self.prof_nonneg.get(), bulk, zc,
+                                                         self._max_angle()), bulk, zc))
+            except ValueError as exc:
+                notes.append(str(exc))
+        self.prof_note.set(" ".join(notes))
+        self._draw_profile()
+
+    def _draw_profile(self):
+        fig = self.prof_fig
+        fig.clear()
+        self.prof_table.delete(*self.prof_table.get_children())
+        if not self.profiles:
+            ax = fig.add_subplot(111)
+            ax.axis("off")
+            ax.text(0.5, 0.5, "Press Calculate profile: each species gets a smooth concentration-depth profile that "
+                              "reproduces its\nintensities at the measured angles. Prior knowledge (constant or absent "
+                              "below a depth, non-negative) sharpens it.\nOnly a few angles are measured, so the depth "
+                              "resolution is limited: read the noise bands and the notes.", ha="center", va="center",
+                    color=MUTED, fontsize=11)
+            self.prof_canvas.draw_idle()
+            return
+        ax1, ax2 = fig.subplots(1, 2, gridspec_kw={"width_ratios": [3, 2]})
+        fits = [p[1] for p in self.profiles]
+        frac = DR.atomic_fraction(fits) if self.prof_frac.get() and len(fits) > 1 else None
+        for i, (sp, f, bulk, zc) in enumerate(self.profiles):
+            colour = PALETTE[self.species.index(sp) % len(PALETTE)]
+            c = frac[i] if frac is not None else f.c / max(float(np.max(np.abs([p[1].c for p in self.profiles]))), 1e-30)
+            ax1.plot(f.z_nm, c, "-", color=colour, lw=1.6, label=sp.name)
+            if self.prof_bands.get() and f.c_se is not None and frac is None:
+                scale = max(float(np.max(np.abs([p[1].c for p in self.profiles]))), 1e-30)
+                ax1.fill_between(f.z_nm, c - f.c_se / scale, c + f.c_se / scale, color=colour, alpha=0.18, lw=0)
+            ax2.errorbar(f.angles, f.measured, yerr=f.sigma, fmt="o", color=colour, ms=4, capsize=2)
+            ax2.plot(f.angles, f.predicted, "-", color=colour, lw=1.2)
+            self.prof_table.insert("", "end", values=(
+                sp.name, f"{math.log10(f.alpha):.1f}", _fmt(f.chi2_red, "{:.2f}"), self.BULK_LABELS[bulk] + (
+                    f" {zc:g}" if bulk != "free" and zc is not None else ""),
+                f"{float(np.max(f.c)):.3g}", "; ".join(n for n in f.notes if "resolution" not in n)))
+        ax1.set_xlabel("Depth below the surface (nm)")
+        ax1.set_ylabel("Atomic fraction" if frac is not None else "Concentration (relative to the largest)")
+        ax1.set_title("Regularised depth profiles", fontsize=10)
+        ax1.grid(alpha=0.3)
+        ax1.axhline(0, color="black", lw=0.6)
+        ax1.legend(fontsize=8, loc="best")
+        ax2.set_xlabel("Emission angle θ (°)")
+        ax2.set_ylabel("Intensity / sensitivity factor")
+        ax2.set_title("Measured (points) and from the profile (lines)", fontsize=10)
+        ax2.grid(alpha=0.3)
+        fig.subplots_adjust(left=0.07, right=0.98, top=0.9, bottom=0.12, wspace=0.28)
+        self.prof_canvas.draw_idle()
+        res = [p[1].notes[-1] for p in self.profiles if p[1].notes]
+        if res and not self.prof_note.get():
+            self.prof_note.set("Note: " + res[0] + ".")
 
     # --- trend plot ---------------------------------------------------------------------------------------
     def _draw(self):

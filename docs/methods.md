@@ -495,6 +495,62 @@ Limits and cautions:
 - The tab uses one attenuation length per species in every layer. In reality it depends on the material it passes
   through, so using each layer's own value would change the result.
 
+### Regularised depth profile
+
+When the species are not in discrete layers, the concentration can be a smooth function of depth. For one species with
+sensitivity factor $S$ and attenuation length $\lambda$, divide the depth into slabs $n$ with concentrations $c_n$; the
+intensity at emission angle $\theta_m$ is
+
+```math
+\frac{I(\theta_m)}{S} = \sum_n c_n\,A_{mn},\qquad A_{mn} = \lambda\cos\theta_m\left[e^{-z_n^{-}/(\lambda\cos\theta_m)}-e^{-z_n^{+}/(\lambda\cos\theta_m)}\right]
+```
+
+where the slab runs from depth $z_n^{-}$ to $z_n^{+}$. A handful of angles cannot determine many slabs, so the profile is found
+by Tikhonov regularisation: the weighted misfit plus a penalty on the roughness of the profile (its second difference) is
+minimised,
+
+```math
+\min_{c}\ \sum_m\left(\frac{\sum_n A_{mn}c_n - b_m}{\sigma_m}\right)^{2} + \alpha\sum_n\left(c_{n-1}-2c_n+c_{n+1}\right)^{2}
+```
+
+with $b_m = I(\theta_m)/S$ and $\sigma_m$ from the counting statistics. A very large $\alpha$ gives a straight line and a very
+small one reproduces the noise as wild oscillations. By default $\alpha$ is chosen from the data as the **smoothest profile
+whose misfit is no larger than the noise allows** (the discrepancy principle); generalised cross-validation is available in
+the code but under-smooths badly with so few angles, which is why it is not the default. The result carries a depth
+resolution of roughly $\lambda\cos\theta_{max}$, and the tab reports it.
+
+Prior knowledge sharpens the profile, and it is the most valuable input because the angle-resolved data hold little
+information:
+
+- **Non-negative.** Concentrations are forced to be zero or positive (a Lawson-Hanson active-set solution). A profile that
+  needs negative concentrations to fit is flagged: either an assumption (attenuation length, geometry, which species) is
+  wrong, or the measurement has lost the information. Looking at the unconstrained profile first is a useful check.
+- **Constant, or zero, below a depth.** A bulk species such as the metal under an oxide has one concentration below some
+  depth, and a surface species has none: the slabs deeper than that depth are merged into one parameter, or removed.
+
+The noise bands drawn on the plot are the covariance of the linear estimator,
+
+```math
+\mathrm{cov}(c) = G\,G^{T},\qquad G = \left(A_w^{T}A_w + \alpha L^{T}L\right)^{-1}A_w^{T},\qquad A_w = A/\sigma
+```
+
+with $L$ the second-difference matrix. They show how far counting noise alone moves the profile; they do **not** include the
+bias that smoothing always adds, so a narrow band does not mean an accurate profile. The species are solved one at a time;
+*Atomic fraction* rescales them to add to 1 at each depth for display only.
+
+### Attenuation lengths and the range of validity
+
+Every method here depends on the attenuation lengths. The starting values are TPP-2M inelastic mean free paths for an
+oxide-like matrix, which is only a guide. Attenuation lengths, which include some of the effect of elastic scattering, are
+typically 10 to 30 percent shorter than inelastic mean free paths [13]; the *AL / IMFP* box scales the starting values (0.8,
+for example) and each length can be edited. Empirical estimates are good to about 6 to 20 percent, so the thickness and
+depth scales inherit that uncertainty.
+
+The simple exponential model is reliable up to emission angles of about 60 to 70 degrees; beyond that elastic scattering,
+roughness and surface contamination matter (the *Max angle* setting leaves those angles out of fits), and a crystalline
+substrate adds photoelectron diffraction that changes the intensities with polar and azimuthal angle. The analysis assumes
+flat, uniform samples.
+
 ## Spectrum simulation
 
 The Simulated spectrum pane draws what a given thickness would look like. It is an **estimate, not a fit**.

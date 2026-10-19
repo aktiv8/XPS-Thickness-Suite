@@ -315,6 +315,20 @@ layer means the data cannot say. The note under the table gives chi-squared per 
 Each species has to belong to one layer, so use *Fitted states* for regions that hold several states. Species can come from
 fits where they exist and whole regions elsewhere (the default).
 
+### Profile (regularised)
+
+For species that are spread through the depth rather than in layers, *Calculate profile* draws a smooth concentration-depth
+profile for each one, with the intensities it predicts (lines) over the measured points beside it. Set the maximum depth and
+the number of depth points; *Auto alpha* chooses the smoothing from the noise, or untick it and give log10 of alpha. The
+**prior knowledge** boxes are what sharpen the result: say that a bulk species is *constant below z* (the metal under an oxide)
+or that a surface species is *zero below z*, and tick *Non-negative*. *Atomic fraction* shows the species as shares of 1,
+and the shaded bands are the uncertainty from counting noise (not the smoothing bias). With only a few angles the depth
+resolution is limited to roughly lambda times cos theta at the largest angle, which the note under the buttons states; a
+negative concentration in a free profile means an assumption, such as an attenuation length, needs another look.
+
+Starting attenuation lengths are inelastic mean free paths; set *AL / IMFP* to about 0.8 to approximate attenuation lengths
+and press *Reload species*. Keep to angles below about 70 degrees.
+
 ## Which tab should I use?
 
 | Your situation | Use |

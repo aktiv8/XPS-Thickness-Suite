@@ -619,6 +619,74 @@ class DepthTabSmoke(unittest.TestCase):
         self.assertEqual(sorted(sp.name for sp in tab.species), ["C 1s", "Si El", "Si Ox"])
         self.assertEqual(sorted(sp.source for sp in tab.species), ["fit", "fit", "region"])
 
+    def _stack(self, noise=False):
+        blocks = S.layered_series([0.8, 1.5], [dict(name="C 1s", be=285.0, layer=0), dict(name="O 1s", be=532.0, layer=1),
+                                               dict(name="Al 2p", be=73.0, layer=-1)])
+        app, tab = self._tab(blocks)
+        tab.v["max_angle"].set("80")
+        tab.transmission.set(False)
+        tab.reload()
+        for row in tab.rows:
+            row["lam"].set("3.0")
+        tab.active()
+        return app, tab
+
+    def test_the_profile_panel_gives_one_profile_per_species_and_a_table(self):
+        app, tab = self._stack()
+        tab._calc_profile()
+        self.assertEqual([p[0].name for p in tab.profiles], ["C 1s", "O 1s", "Al 2p"])
+        rows = [tab.prof_table.item(i, "values") for i in tab.prof_table.get_children()]
+        self.assertEqual([r[0] for r in rows], ["C 1s", "O 1s", "Al 2p"])
+        self.assertEqual(len(tab.prof_fig.axes), 2)                        # profiles, and measured against predicted
+        self.assertLess(float(rows[0][2]), 5.0)
+
+    def test_non_negative_bulk_constant_and_fraction_options(self):
+        app, tab = self._stack()
+        tab.prof_nonneg.set(True)
+        tab.prof_bulk[2][0].set(tab.BULK_LABELS["constant"])
+        tab.prof_bulk[0][0].set(tab.BULK_LABELS["zero"])
+        tab.prof_bulk[0][1].set("4")
+        tab.prof_frac.set(True)
+        tab._calc_profile()
+        by_name = {p[0].name: p for p in tab.profiles}
+        import numpy as np
+        for sp, f, bulk, zc in tab.profiles:
+            self.assertGreaterEqual(float(f.c.min()), 0.0)
+        c_zero = by_name["C 1s"][1]
+        self.assertTrue(np.all(c_zero.c[c_zero.z_nm > 4.0] == 0.0))
+        al = by_name["Al 2p"][1]
+        self.assertTrue(np.allclose(al.c[al.z_nm > 8.0], al.c[al.z_nm > 8.0][0]))
+        self.assertIn("Atomic fraction", tab.prof_fig.axes[0].get_ylabel())
+
+    def test_a_fixed_alpha_changes_the_smoothness(self):
+        app, tab = self._stack()
+        tab._calc_profile()
+        auto = tab.profiles[0][1].alpha
+        tab.prof_auto.set(False)
+        tab.prof_logalpha.set("-6")
+        tab._calc_profile()
+        self.assertAlmostEqual(tab.profiles[0][1].alpha, 1e-6, places=12)
+        self.assertNotAlmostEqual(auto, 1e-6)
+
+    def test_bad_profile_settings_are_reported_not_raised(self):
+        app, tab = self._stack()
+        tab.prof_n.set("3")
+        tab._calc_profile()
+        self.assertEqual(tab.profiles, [])
+        self.assertIn("between 5 and 60", tab.prof_note.get())
+
+    def test_the_attenuation_length_factor_scales_the_starting_lambdas(self):
+        app, tab = self._tab(S.two_state_series(fitted=True))
+        before = [sp.lam_nm for sp in tab.species]
+        tab.v["al_factor"].set("0.8")
+        tab.reload()
+        for b, sp in zip(before, tab.species):
+            self.assertAlmostEqual(sp.lam_nm, 0.8 * b, delta=0.01)      # the table shows two decimals
+        tab.v["al_factor"].set("-1")
+        with mock.patch.object(DT.messagebox, "showerror"):
+            tab.reload()
+        self.assertEqual(tab.species, [])
+
     def test_it_can_take_the_file_from_the_arxps_tab(self):
         app = _make_app(self)
         app.arxps.load_file(self._write(S.two_state_series(fitted=True)))
