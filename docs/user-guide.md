@@ -339,7 +339,7 @@ and press *Reload species*. Keep to angles below about 70 degrees.
 
 A depth profile of the **apparent atomic concentrations** (peak area over sensitivity factor, shares summing to 100 at%),
 after Murdoch and McCulloch [20]. Because it uses shares, a factor common to all peaks cancels, so it is less sensitive to the
-tilt geometry than the intensity-based panels. Tick the species to use (give each its sensitivity factor), or load a CSV
+tilt geometry than the intensity-based panels. Tick the peaks to use in the **Use** column (a region that mixes several depths, such as Si 2s, starts unticked; give each peak its sensitivity factor), or load a CSV
 whose first column is the angle and whose other columns are the at% of each named peak.
 
 For each peak set the attenuation length (*Murdoch EAL* fills them from the kinetic energy, semi-quantitatively), its **Order** in the

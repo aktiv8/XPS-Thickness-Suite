@@ -538,6 +538,8 @@ class DepthTab(ttk.Frame):
             row["use"].set(i not in excluded)
         if notes:
             self.layer_note.set(" ".join(notes))
+        self.mur_note.set(" ".join(n.replace("left out of the default stack", "left out (unticked)") for n in notes)
+                          + (" Tick it in the Use column to include it." if notes else ""))
         labels = self._layer_labels()
         self.layer_vars = [tk.StringVar(value=SUB_LABEL if g == DL.SUBSTRATE_LAYER else labels[min(g, self._k() - 1)])
                            for g in guess]
@@ -992,10 +994,11 @@ class DepthTab(ttk.Frame):
         return True
 
     def _mur_rebuild_grid(self):
-        """One row per peak: lambda, position in the initial guess stack and its thickness."""
+        """One row per peak: Use, lambda, position in the initial guess stack and its thickness."""
         for w in self.mur_grid_frame.winfo_children():
             w.destroy()
         self.mur_grid = []
+        self._mur_building = True
         if self.mur_src.get() == MUR_FROM_CSV:
             names = list(self.mur_csv[0]) if self.mur_csv else []
             lookup = {sp.name.replace(" ", "").lower(): sp for sp in self.species}
@@ -1003,38 +1006,75 @@ class DepthTab(ttk.Frame):
         else:
             peaks = [(sp.name, sp) for sp in self.species]
         if not peaks:
+            self._mur_building = False
             return
-        sp_list = [p[1] for p in peaks if p[1] is not None]
-        order, sub = list(range(len(peaks))), len(peaks) - 1
-        if len(sp_list) == len(peaks):
-            try:
-                layout, _, _ = DL.default_layout(sp_list, len(peaks), self._max_angle())
-                depth = {i: (1e9 if lay == DL.SUBSTRATE_LAYER else i) for i, lay in enumerate(layout)}
-                rows = DP.stratification(sp_list, max_angle=self._max_angle())
-                key = {i: (1e9 if layout[i] == DL.SUBSTRATE_LAYER else (rows[i].z_nm if rows[i].z_nm is not None else 1e8))
-                       for i in range(len(peaks))}
-                order = sorted(range(len(peaks)), key=lambda i: key[i])
-            except ValueError:
-                pass
-        heads = ("Peak", "λ (nm)", "Order", "Guess thickness (nm)")
+        heads = ("Use", "Peak", "λ (nm)", "Order", "Guess thickness (nm)")
         for c, h in enumerate(heads):
             ttk.Label(self.mur_grid_frame, text=h, style="ColHead.TLabel").grid(row=0, column=c, padx=4, sticky="w")
         for i, (name, sp) in enumerate(peaks):
+            if self.mur_src.get() != MUR_FROM_CSV and sp in self.species:
+                use = self.rows[self.species.index(sp)]["use"]            # shared with the species table and the Layers panel
+            else:
+                use = tk.BooleanVar(value=True)
             lam = tk.StringVar(value=f"{sp.lam_nm:.2f}" if sp is not None else "2.00")
-            pos = tk.StringVar(value=str(order.index(i) + 1))
+            pos = tk.StringVar(value=str(i + 1))
             thick = tk.StringVar(value="1.0")
-            ttk.Label(self.mur_grid_frame, text=name, style="Card.TLabel").grid(row=i + 1, column=0, sticky="w", padx=4)
+            ck = ttk.Checkbutton(self.mur_grid_frame, variable=use, style="Card.TCheckbutton", command=self._mur_use_changed)
+            ck.grid(row=i + 1, column=0, padx=4)
+            Tooltip(ck, "Include this peak. A region that mixes several depths (such as Si 2s, which holds the substrate "
+                        "and its oxide) starts unticked: use its fitted states instead.")
+            lab = ttk.Label(self.mur_grid_frame, text=name, style="Card.TLabel")
+            lab.grid(row=i + 1, column=1, sticky="w", padx=4)
             e1 = ttk.Entry(self.mur_grid_frame, textvariable=lam, width=6)
-            e1.grid(row=i + 1, column=1, padx=4, pady=1)
+            e1.grid(row=i + 1, column=2, padx=4, pady=1)
             Tooltip(e1, "Effective attenuation length of this peak's electrons (nm).")
-            cbb = ttk.Combobox(self.mur_grid_frame, textvariable=pos, values=[str(k + 1) for k in range(len(peaks))],
-                               state="readonly", width=3)
-            cbb.grid(row=i + 1, column=2, padx=4)
+            cbb = ttk.Combobox(self.mur_grid_frame, textvariable=pos, state="readonly", width=3)
+            cbb.grid(row=i + 1, column=3, padx=4)
             Tooltip(cbb, "Position in the initial guess stack from the top (1); the last one is the substrate.")
             e2 = ttk.Entry(self.mur_grid_frame, textvariable=thick, width=6)
-            e2.grid(row=i + 1, column=3, padx=4)
+            e2.grid(row=i + 1, column=4, padx=4)
             Tooltip(e2, "Guessed thickness of this peak's layer in the initial stack (ignored for the substrate).")
-            self.mur_grid.append(dict(name=name, lam=lam, order=pos, thick=thick, species=sp))
+            self.mur_grid.append(dict(name=name, lam=lam, order=pos, thick=thick, species=sp, use=use,
+                                      widgets=(lab, e1, cbb, e2), combo=cbb))
+        self._mur_building = False
+        self._mur_apply_use(reorder=True)
+
+    def _mur_default_order(self, idx):
+        """The grid indices `idx` from the top: shallowest first (Stratification), the fitted substrate last."""
+        sps = [self.mur_grid[i]["species"] for i in idx]
+        if len(idx) < 2 or any(s is None for s in sps):
+            return list(idx)
+        try:
+            layout, _, _ = DL.default_layout(sps, len(idx), self._max_angle())
+            rows = DP.stratification(sps, max_angle=self._max_angle())
+        except ValueError:
+            return list(idx)
+        key = {k: (1e9 if layout[k] == DL.SUBSTRATE_LAYER else (rows[k].z_nm if rows[k].z_nm is not None else 1e8))
+               for k in range(len(idx))}
+        return [idx[k] for k in sorted(range(len(idx)), key=lambda k: key[k])]
+
+    def _mur_apply_use(self, reorder=False):
+        """Grey out the unticked peaks and number the ticked ones 1..n (from the default order when `reorder`)."""
+        on = [i for i, g in enumerate(self.mur_grid) if g["use"].get()]
+        if reorder:
+            seq = self._mur_default_order(on)
+        else:
+            seq = sorted(on, key=lambda i: (int(self.mur_grid[i]["order"].get() or 99), i))
+        for rank, i in enumerate(seq):
+            self.mur_grid[i]["order"].set(str(rank + 1))
+        for i, g in enumerate(self.mur_grid):
+            state = "normal" if g["use"].get() else "disabled"
+            g["widgets"][1].configure(state=state)
+            g["widgets"][3].configure(state=state)
+            g["widgets"][0].configure(foreground="" if g["use"].get() else MUTED)
+            g["combo"].configure(values=[str(k + 1) for k in range(len(on))], state="readonly" if g["use"].get() else "disabled")
+
+    def _mur_use_changed(self):
+        if getattr(self, "_mur_building", False):
+            return
+        self.mur_fit = self.mur_scurve = self.mur_ens = None
+        self._mur_apply_use(reorder=True)
+        self._draw_mur()
 
     def _mur_eal(self):
         if not self.mur_grid:
@@ -1051,10 +1091,17 @@ class DepthTab(ttk.Frame):
             if not self.mur_csv:
                 raise ValueError("Load a CSV of measured at% first (angle, then one column per peak).")
             names, angles, x = self.mur_csv
-            sig, rows = None, list(range(len(names)))
+            rows = [i for i, g in enumerate(self.mur_grid) if g["use"].get()]
+            if len(rows) < 2:
+                raise ValueError("Tick at least two peaks: concentrations are relative.")
+            names = [names[i] for i in rows]
+            x = x[rows]
+            x = x / x.sum(axis=0)
+            sig = None
         else:
-            use = {id(sp): row["use"].get() for sp, row in zip(self.species, self.rows)}
-            rows = [i for i, g in enumerate(self.mur_grid) if g["species"] is not None and use.get(id(g["species"]), True)]
+            rows = [i for i, g in enumerate(self.mur_grid) if g["species"] is not None and g["use"].get()]
+            if len(rows) < 2:
+                raise ValueError("Tick at least two peaks: concentrations are relative.")
             for sp in [self.mur_grid[i]["species"] for i in rows]:
                 row = self.rows[self.species.index(sp)]
                 rsf = _to_float(row["rsf"].get())

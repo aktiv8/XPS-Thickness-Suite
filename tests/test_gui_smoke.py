@@ -604,6 +604,25 @@ class DepthTabSmoke(unittest.TestCase):
         tab._mur_fit_now()
         self.assertIn("different position", tab.mur_note.get())
 
+    def test_murdoch_use_boxes_switch_peaks_on_and_off(self):
+        app, tab = self._layers_tab()
+        tab.mur_log.set("-4")
+        self.assertTrue(all(g["use"].get() for g in tab.mur_grid))
+        tab.mur_grid[0]["use"].set(False)                                  # untick C 1s
+        tab._mur_use_changed()
+        self.assertEqual(sorted(g["order"].get() for g in tab.mur_grid if g["use"].get()), ["1", "2"])
+        tab._mur_fit_now()
+        self.assertEqual(tab.mur_fit.names, ["O 1s", "Al 2p"])
+        tab.mur_grid[1]["use"].set(False)                                  # only one left
+        tab._mur_use_changed()
+        tab._mur_fit_now()
+        self.assertIn("at least two", tab.mur_note.get())
+        tab.mur_grid[0]["use"].set(True)
+        tab.mur_grid[1]["use"].set(True)
+        tab._mur_use_changed()
+        tab._mur_fit_now()
+        self.assertEqual(len(tab.mur_fit.names), 3)
+
     def test_scanning_the_ranges_fills_the_table_and_editing_a_thickness_clears_them(self):
         app, tab = self._layers_tab()
         tab.scan_layers_now()
