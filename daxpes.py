@@ -152,6 +152,7 @@ class DaxpesResult:
     d_nm: float                              # DAXPES thickness, independent of coverage
     q: float                                 # (I_H/I_inf,H) / (I_X/I_inf,X)
     d_se_nm: Optional[float] = None
+    q_se: Optional[float] = None             # 1-sigma of q from the counting statistics (None if not known)
     t_soft_nm: Optional[float] = None        # single-source (full coverage assumed) thicknesses
     t_hard_nm: Optional[float] = None
     coverage: Optional[float] = None         # exact within the model: r / (1 - e^(-d/(lam cos theta)))
@@ -217,6 +218,7 @@ def analyse(i_soft: float, i_hard: float, lam_soft: float, lam_hard: float, thet
         rel_rho = None
     sigs = [sig_soft, sig_hard, rho * rel_rho if rel_rho else None]
     res.d_se_nm = _propagate(d_of, [i_soft, i_hard, rho], sigs)
+    res.q_se = _propagate(lambda v: (v[1] / v[0]) / v[2], [i_soft, i_hard, rho], sigs)
 
     c = math.cos(math.radians(theta_deg))
     if have_inf:
@@ -307,6 +309,7 @@ def analyse_background(b1_soft: float, b1_hard: float, lam_soft: float, lam_hard
                        b1_hard=b1_hard, limit_nm=ELASTIC_LIMIT_FACTOR * lam_hard * c)
     res.d_se_nm = _propagate(lambda v: background_thickness(v[0], v[1], lam_soft, lam_hard, theta_deg)[0],
                              [b1_soft, b1_hard], [sig_b1_soft, sig_b1_hard])
+    res.q_se = _propagate(lambda v: v[1] / v[0], [b1_soft, b1_hard], [sig_b1_soft, sig_b1_hard])
     if i_soft is not None and iinf_soft is not None and i_soft > 0 and iinf_soft > 0:
         r_x = i_soft / iinf_soft
         res.coverage = r_x / film_factor(d, lam_soft, theta_deg)
@@ -340,3 +343,142 @@ def analyse_background(b1_soft: float, b1_hard: float, lam_soft: float, lam_hard
         res.warnings.append("Very thin film: the two B1 values differ little, and the paper found the background method "
                             "underestimates the thickness of ultra-thin films (below about 3 nm).")
     return res
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Both methods together: the attenuation-length ratio is measured, not assumed
+# ---------------------------------------------------------------------------------------------------------------
+#
+# With u = d / (lam_X cos theta) and rho = lam_H / lam_X the two ratios of the paper are
+#     q_A = (1 - e^(-u/rho)) / (1 - e^(-u))                      (peak areas, Eq. 6)
+#     q_B = (1 - e^(-u/(2 rho))) / (1 - e^(-u/2))                (B1 values, Eqs. 5 and 7 with d* = d/(2 cos theta))
+# two equations for the two unknowns u and rho, so a film measured by both methods fixes its own thickness and
+# attenuation-length ratio; only the soft-source length lam_X is still needed to turn u into nanometres, and that is
+# the length the universal curves agree on best. The model of Eq. 5 is approximate (elastic scattering, the factor 2), so
+# the result is a diagnostic as much as an estimate, and the fit can carry a prior on rho (from Seah or TPP-2M).
+
+
+@dataclass
+class JointResult:
+    d_nm: float                              # thickness u lam_X cos(theta) in the model of Eq. 5
+    d_se_nm: Optional[float]
+    rho: float                               # lam_H / lam_X preferred by the two measurements (and the prior, if any)
+    rho_se: Optional[float]
+    rho_prior: Optional[float]
+    chi2: float
+    dof: int
+    converged: bool
+    condition: Optional[float] = None
+    notes: List[str] = field(default_factory=list)
+
+
+def joint_model(u: float, rho: float) -> Tuple[float, float]:
+    """(q_A, q_B) for the reduced thickness u = d / (lam_X cos theta) and rho = lam_H / lam_X."""
+    return (math.expm1(-u / rho) / math.expm1(-u), math.expm1(-u / (2.0 * rho)) / math.expm1(-u / 2.0))
+
+
+def joint_fit(q_area: float, q_b1: float, lam_soft: float, lam_hard: float, theta_deg: float = 0.0,
+              q_area_se: Optional[float] = None, q_b1_se: Optional[float] = None, prior_rel: Optional[float] = 0.10,
+              default_rel: Tuple[float, float] = (0.02, 0.05)) -> JointResult:
+    """
+    Least squares for (u, rho) from the peak-area ratio `q_area` and the B1 ratio `q_b1`. Each ratio is weighted by its
+    1-sigma (`*_se`, else `default_rel` of its value); `prior_rel` adds a Gaussian prior of that relative width on rho
+    centred on lam_hard / lam_soft (None: no prior, the data alone, which is exactly determined). The thickness is
+    u lam_soft cos(theta). The errors come from the Jacobian at the solution (counting statistics only, soft length exact).
+    """
+    c = math.cos(math.radians(theta_deg))
+    rho0 = lam_hard / lam_soft
+    if not (q_area > 0 and q_b1 > 0 and rho0 > 1.0):
+        raise ValueError("The hard-source length must exceed the soft one and both ratios must be positive.")
+    sa = q_area_se if q_area_se else default_rel[0] * q_area
+    sb = q_b1_se if q_b1_se else default_rel[1] * q_b1
+
+    def resid(x):
+        u, rho = math.exp(x[0]), 1.0 + math.exp(x[1])
+        qa, qb = joint_model(u, rho)
+        r = [(qa - q_area) / sa, (qb - q_b1) / sb]
+        if prior_rel:
+            r.append((math.log(rho) - math.log(rho0)) / prior_rel)
+        return r
+
+    u_start = 1.0
+    try:
+        u_start = max(daxpes_thickness(q_area, lam_soft, lam_hard, theta_deg) / (lam_soft * c), 0.05)
+    except ValueError:
+        pass
+    x = [math.log(u_start), math.log(max(rho0 - 1.0, 1e-3))]
+    import numpy as np                                               # (daxpes.py is otherwise standard library only)
+    lam, cost = 1e-3, None
+    jac = None
+    for _ in range(200):
+        r = np.array(resid(x))
+        cost = float(r @ r)
+        jac = np.empty((len(r), 2))
+        for j in range(2):
+            xp = list(x)
+            xp[j] += 1e-6
+            jac[:, j] = (np.array(resid(xp)) - r) / 1e-6
+        step = None
+        for _try in range(30):
+            a = jac.T @ jac + lam * np.eye(2)
+            try:
+                step = np.linalg.solve(a, -jac.T @ r)
+            except np.linalg.LinAlgError:
+                lam *= 10
+                continue
+            xn = [x[0] + step[0], x[1] + step[1]]
+            try:
+                rn = np.array(resid(xn))
+            except (OverflowError, ValueError, ZeroDivisionError):
+                lam *= 10
+                continue
+            if float(rn @ rn) < cost or float(rn @ rn) < 1e-24:
+                x, lam = xn, max(lam / 5.0, 1e-12)
+                break
+            lam *= 10
+        else:
+            break
+        if step is None or float(np.max(np.abs(step))) < 1e-12:
+            break
+    r = np.array(resid(x))
+    chi2 = float(r @ r)
+    u, rho = math.exp(x[0]), 1.0 + math.exp(x[1])
+    dof = len(r) - 2
+    res = JointResult(u * lam_soft * c, None, rho, None, rho0 if prior_rel else None, chi2, dof,
+                      converged=bool(chi2 < 1e-6 or (dof > 0 and chi2 < 1e3)))
+    try:
+        cov = np.linalg.inv(jac.T @ jac)
+        res.d_se_nm = res.d_nm * math.sqrt(max(cov[0, 0], 0.0))
+        res.rho_se = (rho - 1.0) * math.sqrt(max(cov[1, 1], 0.0))
+        res.condition = float(np.linalg.cond(jac / np.maximum(np.linalg.norm(jac, axis=0), 1e-30)))
+    except np.linalg.LinAlgError:
+        res.notes.append("the two measurements do not determine both unknowns")
+    if res.condition is not None and res.condition > 1e3:
+        res.notes.append("poorly determined: the two ratios carry almost the same information here")
+    if prior_rel and dof > 0 and chi2 > 4.0:
+        res.notes.append(f"the data pull away from the prior on the length ratio (chi2 = {chi2:.1f} for {dof} degree of "
+                         "freedom): the assumed attenuation lengths, unequal analysed areas or the B1 settings may be wrong")
+    return res
+
+
+def consistency(area: DaxpesResult, background: DaxpesResult, joint: Optional[JointResult] = None,
+                rel_floor: float = 0.15) -> Dict[str, object]:
+    """
+    Compare the thickness of the two methods like for like: the peak-area d (Eq. 6) with the background d* converted by
+    the model of Eq. 5, 2 d* cos(theta) (Eq. 8's capped value is shown too, but it is a different, empirical mapping).
+    They agree if they differ by less than two combined standard errors or `rel_floor` of the thickness.
+    """
+    d_a, d_b = area.d_nm, background.d_simple_nm
+    sig = math.hypot(area.d_se_nm or 0.0, (background.d_se_nm or 0.0) * (d_b / background.d_nm if background.d_nm else 1.0))
+    diff = d_b - d_a
+    agree = abs(diff) <= max(2.0 * sig, rel_floor * d_a)
+    out: Dict[str, object] = {"d_area": d_a, "d_bg_model": d_b, "d_bg_eq8": background.d_nm, "diff": diff, "agree": agree,
+                              "warnings": []}
+    if not agree:
+        msg = (f"The area method gives {d_a:.2f} nm and the background method {d_b:.2f} nm (model reading): more than "
+               "their errors allow. Likely causes are the ratio of the attenuation lengths, different analysed areas for the "
+               "two sources, or the C, D and ΔE of the B1 fit")
+        if joint is not None and joint.converged:
+            msg += f"; the data themselves prefer λ_hard/λ_soft = {joint.rho:.2f}"
+        out["warnings"].append(msg + ".")
+    return out

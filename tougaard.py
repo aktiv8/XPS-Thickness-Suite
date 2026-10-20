@@ -31,6 +31,7 @@ CROSS_SECTIONS: Dict[str, Tuple[float, float]] = {
     "Universal (C = -1643, D = 1)": (-1643.0, 1.0),
 }
 DEFAULT_DELTA_E = 30.0          # eV; Murdoch used 30 eV (the allowed range is 15-30 eV)
+DEFAULT_BAND = (15.0, 45.0)     # eV above the centroid for the optional band fit (a low-noise variant, not Murdoch's)
 SMOOTH_POINTS = 5               # five-point adjacent averaging for the fit (Murdoch, Fig. 9)
 BASELINE_POINTS = 10            # points at the low-binding-energy end taken as the flat zero level
 
@@ -77,17 +78,21 @@ class B1Fit:
     background: np.ndarray                 # b1 * integral J K
     f: np.ndarray                          # J - background
     notes: list = field(default_factory=list)
+    band_be: Optional[Tuple[float, float]] = None      # binding-energy range used when B1 was fitted over a band
 
 
 def fit_b1(be: Sequence[float], y: Sequence[float], window: Tuple[float, float], c: float, d: float,
            delta_e: float = DEFAULT_DELTA_E, eval_be: Optional[float] = None, smooth_n: int = SMOOTH_POINTS,
-           n_base: int = BASELINE_POINTS, matrix: Optional[np.ndarray] = None, iterations: int = 12) -> B1Fit:
+           n_base: int = BASELINE_POINTS, matrix: Optional[np.ndarray] = None, iterations: int = 12,
+           band: Optional[Tuple[float, float]] = None) -> B1Fit:
     """
     B1 of one spectrum. `window` = (lo, hi) binding energies around the peak (for the centroid and the area); the spectrum
     must run from a flat, peak-free zero level at the low-BE end to at least `delta_e` above the centroid (or `eval_be`, an
     absolute binding energy, if given). The zero level is the mean of the first `n_base` points; the fit uses the spectrum
     smoothed over `smooth_n` points. The centroid is found self-consistently from F. `matrix` can carry a precomputed
-    `kernel_matrix` for the same axis.
+    `kernel_matrix` for the same axis. With `band` = (e1, e2) (eV above the centroid) B1 is instead the least-squares value
+    over that range, B1 = sum(J I) / sum(I^2) with I the integral of Eq. 1, which is the same number for a spectrum that
+    obeys Eq. 1 but uses many points rather than one, so it is far less noisy; it is a variant of Murdoch's definition.
     """
     x = np.asarray(be, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -107,16 +112,32 @@ def fit_b1(be: Sequence[float], y: Sequence[float], window: Tuple[float, float],
     centroid = float(x[win][int(np.argmax(ys[win]))])
     b1 = 0.0
     xf = centroid
+    band_be = None
     for _ in range(iterations):
-        xf = eval_be if eval_be is not None else centroid + delta_e
-        if xf > x[-1]:
-            raise ValueError(f"The spectrum ends at {x[-1]:.1f} eV but the background must be fitted at {xf:.1f} eV "
-                             f"({delta_e:g} eV above the peak): record a wider range.")
-        jf, i_f = float(np.interp(xf, x, ys)), float(np.interp(xf, x, integral))
-        if i_f <= 0 or jf <= 0:
-            raise ValueError("There is no inelastic tail to fit at the evaluation point: the signal there is at or below "
-                             "the zero level (too noisy, or the baseline end of the spectrum is not flat).")
-        b1 = jf / i_f
+        if band is not None and eval_be is None:
+            lo_b, hi_b = centroid + band[0], centroid + band[1]
+            if hi_b > x[-1]:
+                raise ValueError(f"The spectrum ends at {x[-1]:.1f} eV but the background band reaches {hi_b:.1f} eV "
+                                 f"({band[1]:g} eV above the peak): record a wider range.")
+            sel = (x >= lo_b) & (x <= hi_b)
+            if sel.sum() < 5:
+                raise ValueError("The background band holds too few points.")
+            den = float(integral[sel] @ integral[sel])
+            b1 = float(ys[sel] @ integral[sel]) / den if den > 0 else 0.0
+            if b1 <= 0:
+                raise ValueError("There is no inelastic tail to fit in the band: the signal there is at or below the "
+                                 "zero level (too noisy, or the baseline end of the spectrum is not flat).")
+            xf, band_be = 0.5 * (lo_b + hi_b), (lo_b, hi_b)
+        else:
+            xf = eval_be if eval_be is not None else centroid + delta_e
+            if xf > x[-1]:
+                raise ValueError(f"The spectrum ends at {x[-1]:.1f} eV but the background must be fitted at {xf:.1f} eV "
+                                 f"({delta_e:g} eV above the peak): record a wider range.")
+            jf, i_f = float(np.interp(xf, x, ys)), float(np.interp(xf, x, integral))
+            if i_f <= 0 or jf <= 0:
+                raise ValueError("There is no inelastic tail to fit at the evaluation point: the signal there is at or "
+                                 "below the zero level (too noisy, or the baseline end of the spectrum is not flat).")
+            b1 = jf / i_f
         f = ys - b1 * integral
         w = np.where(win, f, 0.0)
         tot = float(_trapezoid(w, x))
@@ -129,7 +150,7 @@ def fit_b1(be: Sequence[float], y: Sequence[float], window: Tuple[float, float],
         centroid = new
     f_raw = yb - b1 * (m @ yb)
     area = float(_trapezoid(np.where(win, f_raw, 0.0), x))
-    return B1Fit(b1, centroid, xf, area, base, x, yb, b1 * integral, ys - b1 * integral)
+    return B1Fit(b1, centroid, xf, area, base, x, yb, b1 * integral, ys - b1 * integral, band_be=band_be)
 
 
 def b1_sigma(be: Sequence[float], counts: Sequence[float], scale: float, window: Tuple[float, float], c: float, d: float,
@@ -150,3 +171,28 @@ def b1_sigma(be: Sequence[float], counts: Sequence[float], scale: float, window:
         except ValueError:
             continue
     return float(np.std(vals, ddof=1)) if len(vals) >= max(10, draws // 3) else None
+
+
+def sensitivity_table(be_soft, y_soft, be_hard, y_hard, window: Tuple[float, float],
+                      classes: Optional[Dict[str, Tuple[float, float]]] = None,
+                      deltas: Sequence[float] = (15.0, 20.0, 30.0), band: Optional[Tuple[float, float]] = DEFAULT_BAND):
+    """
+    B1 of the soft and hard spectrum for each cross-section class and each DeltaE (and the band fit), as
+    [(label, b1_soft, b1_hard)] with fits that fail left out. It shows how much of the B1 ratio, and so of the thickness,
+    rests on the choices of C, D and DeltaE rather than on the data.
+    """
+    classes = classes or {k: v for k, v in CROSS_SECTIONS.items() if "Universal" not in k}
+    rows = []
+    for name, (c, d) in classes.items():
+        mats = (kernel_matrix(np.asarray(be_soft, dtype=float), c, d), kernel_matrix(np.asarray(be_hard, dtype=float), c, d))
+        variants = [(f"DeltaE {de:g} eV", dict(delta_e=de)) for de in deltas]
+        if band is not None:
+            variants.append((f"band {band[0]:g}-{band[1]:g} eV", dict(band=band)))
+        for label, kw in variants:
+            try:
+                bs = fit_b1(be_soft, y_soft, window, c, d, matrix=mats[0], **kw).b1
+                bh = fit_b1(be_hard, y_hard, window, c, d, matrix=mats[1], **kw).b1
+            except ValueError:
+                continue
+            rows.append((f"{name.split(' (')[0]}, {label}", bs, bh))
+    return rows

@@ -29,6 +29,7 @@ NO_REGION = "(none)"
 CUSTOM = "custom (type the values)"
 METHOD_AREA = "Peak areas (Eq. 6)"
 METHOD_BG = "Inelastic background B1 (Eqs. 7-8)"
+METHOD_BOTH = "Both methods, with a consistency check"
 AL_SEAH = "Seah 2012 universal curve (S3)"
 AL_TPP = "TPP-2M IMFP x AL/IMFP"
 
@@ -59,12 +60,16 @@ class DaxpesTab(ttk.Frame):
         self.method = tk.StringVar(value=METHOD_AREA)
         self.cross = tk.StringVar(value=next(iter(TGD.CROSS_SECTIONS)))
         self.b1_fits = {}                      # "soft"/"hard" -> tougaard.B1Fit of the last background calculation
+        self._sens_rows = []
+        self.extra = None                      # both-methods result: background result, joint fit, consistency, ratios
+        self.band_fit = tk.BooleanVar(value=False)
         keys = ("be", "w_lo", "w_hi", "theta", "lam_soft", "lam_hard", "hv_soft", "hv_hard", "factor", "i_soft", "i_hard",
-                "inf_soft", "inf_hard", "rho", "c", "d", "delta_e", "b1_soft", "b1_hard")
+                "inf_soft", "inf_hard", "rho", "c", "d", "delta_e", "b1_soft", "b1_hard", "prior")
         self.v = {k: tk.StringVar() for k in keys}
         self.v["theta"].set("0")
         self.v["factor"].set("0.9")
         self.v["delta_e"].set(f"{TGD.DEFAULT_DELTA_E:g}")
+        self.v["prior"].set("10")
         self._cross_changed()
         self.v["hv_soft"].set(f"{DX.SOURCES['Al Kα']:g}")
         self.v["hv_hard"].set(f"{DX.SOURCES['Ag Lα']:g}")
@@ -93,12 +98,13 @@ class DaxpesTab(ttk.Frame):
         top = ttk.Frame(card, style="Card.TFrame")
         top.grid(row=0, column=0, sticky="ew")
         ttk.Label(top, text="Method:", style="Card.TLabel").pack(side="left")
-        mcb = ttk.Combobox(top, textvariable=self.method, values=[METHOD_AREA, METHOD_BG], state="readonly", width=32)
+        mcb = ttk.Combobox(top, textvariable=self.method, values=[METHOD_AREA, METHOD_BG, METHOD_BOTH], state="readonly", width=34)
         mcb.pack(side="left", padx=6)
         mcb.bind("<<ComboboxSelected>>", lambda e: self._method_changed())
         Tooltip(mcb, "Peak areas: the film and thick-reference peak areas of each source (Eq. 6), which needs a reference "
                      "for each source. Inelastic background: the Tougaard background parameter B1 of the film spectrum of "
-                     "each source (Eqs. 7-8), which needs no reference sample.")
+                     "each source (Eqs. 7-8), which needs no reference sample. Both: run the two on the same data, compare "
+                     "them and fit the ratio of the attenuation lengths from the two measurements together.")
         self.setup_nb = nb = ttk.Notebook(card, style="Sub.TNotebook")
         nb.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         pages = []
@@ -197,6 +203,17 @@ class DaxpesTab(ttk.Frame):
                     "the peak in binding energy (15-30 eV; 30 in the paper). The spectrum must extend at least that far, "
                     "and should start on a flat zero level below the peak.", width=8)
         r += 1
+        bc = ttk.Checkbutton(card, text="Fit B1 over ΔE-15 to ΔE+15 eV (less noise)", variable=self.band_fit,
+                             style="Card.TCheckbutton", command=self._clear_result)
+        bc.grid(row=r, column=0, columnspan=4, sticky="w")
+        Tooltip(bc, "Least-squares B1 over a band 15-45 eV above the peak instead of the single point at ΔE (the paper's "
+                    "definition). It gives the same number for a spectrum that obeys Eq. 1 but is about three times less "
+                    "noisy on the sample data.")
+        r += 1
+        self._entry(card, "prior", r, "Prior on λ ratio (± %):", "Both methods: the width of the Gaussian prior on "
+                    "λ_hard/λ_soft around the value of the two lengths you entered (Seah or TPP-2M). Small: trust the "
+                    "lengths; large: let the two measurements decide.", width=6)
+        r += 1
         self._entry(card, "b1_soft", r, "B1 soft (eV²):", "Type B1 instead of fitting it from the spectrum (for example "
                     "from other software).", width=8)
         self._entry(card, "b1_hard", r, "B1 hard:", "B1 of the hard-source spectrum.", col=2, width=7)
@@ -267,7 +284,8 @@ class DaxpesTab(ttk.Frame):
         nb = ttk.Notebook(frame, style="Sub.TNotebook")
         nb.grid(row=0, column=0, sticky="nsew")
         self.figs = {}
-        for key, title in (("result", "Thickness and coverage"), ("spectra", "Spectra")):
+        for key, title in (("result", "Thickness and coverage"), ("spectra", "Spectra"), ("background", "Background (B1)"),
+                           ("consistency", "Consistency")):
             page = ttk.Frame(nb, style="Card.TFrame", padding=4)
             nb.add(page, text=title)
             fig = Figure(figsize=(8, 5), dpi=100)
@@ -409,8 +427,21 @@ class DaxpesTab(ttk.Frame):
         if not 0.0 <= theta < 90.0:
             raise ValueError("θ must be from 0 up to (not including) 90 degrees.")
         lam_s, lam_h = self._num("lam_soft", "λ soft", True), self._num("lam_hard", "λ hard", True)
-        if self.method.get() == METHOD_BG:
-            return self._calculate_background(theta, lam_s, lam_h)
+        method = self.method.get()
+        self.extra = None
+        if method == METHOD_BG:
+            res = self._background_result(theta, lam_s, lam_h, keep_extractions=False)
+            self.result = (res, lam_s, lam_h, theta, None)
+        elif method == METHOD_BOTH:
+            return self._calculate_both(theta, lam_s, lam_h)
+        else:
+            res, vals = self._area_result(theta, lam_s, lam_h)
+            self.result = (res, lam_s, lam_h, theta, vals)
+        self._present(res)
+        self._draw()
+
+    def _area_result(self, theta, lam_s, lam_h):
+        """Murdoch's peak-area method: (DaxpesResult, the four areas or None when only a reference ratio is known)."""
         if not self.v["w_lo"].get() or not self.v["w_hi"].get():
             if any(self._block(s) is not None for s in self.slots.values()):
                 self.auto_window()
@@ -452,19 +483,37 @@ class DaxpesTab(ttk.Frame):
                          sig_soft=sigs["samp_soft"], sig_hard=sigs["samp_hard"],
                          sig_inf_soft=sigs["ref_soft"] if both_inf else None,
                          sig_inf_hard=sigs["ref_hard"] if both_inf else None)
-        self.result = (res, lam_s, lam_h, theta, vals if both_inf else None)
-        self._present(res)
+        return res, (vals if both_inf else None)
+
+    def _calculate_both(self, theta, lam_s, lam_h):
+        """Both methods on the same data, compared, and the two measurements fitted together for the length ratio."""
+        res_a, vals = self._area_result(theta, lam_s, lam_h)
+        res_b = self._background_result(theta, lam_s, lam_h, keep_extractions=True)
+        prior = self._optional("prior", "Prior on λ ratio")
+        joint = None
+        try:
+            joint = DX.joint_fit(res_a.q, res_b.q, lam_s, lam_h, theta, q_area_se=res_a.q_se, q_b1_se=res_b.q_se,
+                                 prior_rel=prior / 100.0 if prior else None)
+        except ValueError:
+            pass
+        cons = DX.consistency(res_a, res_b, joint)
+        self.extra = {"bg": res_b, "joint": joint, "cons": cons}
+        self.result = (res_a, lam_s, lam_h, theta, vals)
+        self._present(res_a)
+        self._present_both()
         self._draw()
 
-    def _calculate_background(self, theta, lam_s, lam_h):
+    def _background_result(self, theta, lam_s, lam_h, keep_extractions=False):
         """Murdoch's background method: B1 of the film spectrum of each source, then Eqs. 7 and 8."""
         c, d = self._num("c", "C"), self._num("d", "D")
         if d < 0:
             raise ValueError("D must not be negative.")
         delta_e = self._num("delta_e", "ΔE", positive=True)
+        band = TGD.DEFAULT_BAND if self.band_fit.get() else None
         typed = {"soft": self._optional("b1_soft", "B1 soft"), "hard": self._optional("b1_hard", "B1 hard")}
-        for slot in self.slots.values():
-            slot.extraction = None
+        if not keep_extractions:
+            for slot in self.slots.values():
+                slot.extraction = None
         self.b1_fits = {}
         any_file = any(self._block(sl) is not None for sl in self.slots.values())
         if any_file and (not self.v["w_lo"].get() or not self.v["w_hi"].get()):
@@ -485,11 +534,11 @@ class DaxpesTab(ttk.Frame):
             if win is None:
                 raise ValueError("Set the peak window (Auto window) first.")
             be, y = self._spectrum(blk)
-            fit = TGD.fit_b1(be, y, win, c, d, delta_e=delta_e)
+            fit = TGD.fit_b1(be, y, win, c, d, delta_e=delta_e, band=band)
             tf = AR._transmission_factor(blk, blk.hv_ev - 0.5 * (win[0] + win[1]))
             scale = 1.0 / ((blk.scans or 1) * (blk.dwell_s or 1.0)) / max(tf, 1e-12)
             b1[src] = fit.b1
-            sig[src] = TGD.b1_sigma(be, blk.counts, scale, win, c, d, delta_e=delta_e, draws=40)
+            sig[src] = TGD.b1_sigma(be, blk.counts, scale, win, c, d, delta_e=delta_e, band=band, draws=40)
             self.b1_fits[src] = fit
         # the coverage needs the peak areas of the film and a thick reference (files or typed); it is optional here
         vals = {}
@@ -505,12 +554,29 @@ class DaxpesTab(ttk.Frame):
                     vals[key] = self._extract(self.slots[key], AR.Window(*win), None if key == "samp_soft" else reference)[0]
                 except ValueError:
                     vals[key] = None
-        res = DX.analyse_background(b1["soft"], b1["hard"], lam_s, lam_h, theta, sig.get("soft"), sig.get("hard"),
-                                    i_soft=vals.get("samp_soft"), iinf_soft=vals.get("ref_soft"),
-                                    i_hard=vals.get("samp_hard"), iinf_hard=vals.get("ref_hard"))
-        self.result = (res, lam_s, lam_h, theta, None)
-        self._present(res)
-        self._draw()
+        self._sens_rows = []
+        if self.b1_fits and win is not None and len(self.b1_fits) == 2:
+            bs, bh = self._block(self.slots["samp_soft"]), self._block(self.slots["samp_hard"])
+            try:
+                self._sens_rows = TGD.sensitivity_table(*self._spectrum(bs), *self._spectrum(bh), win)
+            except ValueError:
+                self._sens_rows = []
+        return DX.analyse_background(b1["soft"], b1["hard"], lam_s, lam_h, theta, sig.get("soft"), sig.get("hard"),
+                                     i_soft=vals.get("samp_soft"), iinf_soft=vals.get("ref_soft"),
+                                     i_hard=vals.get("samp_hard"), iinf_hard=vals.get("ref_hard"))
+
+    def _sensitivity_lines(self, lam_s, lam_h, theta):
+        """B1 and the thickness for other C, D, ΔE and the band fit, to show how much rests on those choices."""
+        if not self._sens_rows:
+            return []
+        lines = ["", "How much rests on the B1 settings (soft, hard B1; ratio; d by Eq. 8):"]
+        for label, bs, bh in self._sens_rows:
+            try:
+                d = DX.background_thickness(bs, bh, lam_s, lam_h, theta)[0]
+                lines.append(f"  {label:<34} {bs:8.0f} {bh:8.0f}  {bh / bs:.3f}  d = {d:.2f} nm")
+            except ValueError:
+                lines.append(f"  {label:<34} {bs:8.0f} {bh:8.0f}  {bh / bs:.3f}  (outside the resolvable range)")
+        return lines
 
     def _present_background(self, res):
         err = f" ± {res.d_se_nm:.2f}" if res.d_se_nm else ""
@@ -540,12 +606,46 @@ class DaxpesTab(ttk.Frame):
                 cov = (f", coverage {100 * band[2]:.0f} to {100 * band[3]:.0f} %" if band[2] is not None else "")
                 lines.append(f"if {text}: d = {band[0]:.2f} to {band[1]:.2f} nm" + cov)
         lines += [""] + [f"! {w}" for w in res.warnings]
+        lines += self._sensitivity_lines(self.result[1], self.result[2], self.result[3])
         lines += ["", "B1 does not depend on the coverage, the flux or the cross-section of either source; the uncertainty "
                       "is the counting-statistics part only (Monte Carlo)."]
         self.details.configure(state="normal")
         self.details.delete("1.0", "end")
         self.details.insert("1.0", "\n".join(lines))
         self.details.configure(state="disabled")
+
+    def _present_both(self):
+        """Add the background method, the comparison and the joint fit to the details of the area result."""
+        res_b, joint, cons = self.extra["bg"], self.extra["joint"], self.extra["cons"]
+        _, lam_s, lam_h, theta, _ = self.result
+        lines = ["", "-" * 44, "BACKGROUND METHOD (B1)",
+                 f"B1 soft = {res_b.b1_soft:.1f} eV², hard = {res_b.b1_hard:.1f} eV²,  B1_H/B1_X = {res_b.q:.4f}",
+                 f"Eq. 7 d* = {res_b.d_star_nm:.3f} nm;  Eq. 8 d = {res_b.d_nm:.3f} nm;  model reading 2 d* cos θ = "
+                 f"{res_b.d_simple_nm:.3f} nm" + (f" ± {res_b.d_se_nm:.2f}" if res_b.d_se_nm else ""), "",
+                 "COMPARISON (like for like: area d against 2 d* cos θ)",
+                 f"area {cons['d_area']:.2f} nm   background {cons['d_bg_model']:.2f} nm   difference "
+                 f"{cons['diff']:+.2f} nm   -> {'agree' if cons['agree'] else 'DISAGREE'}"]
+        if joint is not None:
+            lines += ["", "JOINT FIT (both ratios, with a prior on the length ratio)",
+                      f"λ_hard/λ_soft: entered {lam_h / lam_s:.3f}, data+prior {joint.rho:.3f}" +
+                      (f" ± {joint.rho_se:.3f}" if joint.rho_se else ""),
+                      f"thickness {joint.d_nm:.2f} nm" + (f" ± {joint.d_se_nm:.2f}" if joint.d_se_nm else "") +
+                      f"   (chi2 {joint.chi2:.2f}, {joint.dof} d.o.f.)"]
+            lines += [f"  note: {n}" for n in joint.notes]
+        else:
+            lines += ["", "JOINT FIT: not possible for these ratios"]
+        lines += self._sensitivity_lines(lam_s, lam_h, theta)
+        warnings = list(cons["warnings"]) + [w for w in res_b.warnings if w not in self.result[0].warnings]
+        lines += [""] + [f"! {w}" for w in warnings]
+        self.details.configure(state="normal")
+        self.details.insert("end", "\n".join(lines))
+        self.details.configure(state="disabled")
+        if cons["warnings"]:
+            self._set_badge("warn", cons["warnings"][0])
+        else:
+            self._set_badge("ok", "The two methods agree" + (" and the data support the entered length ratio"
+                                                             if joint and not joint.notes else ""))
+        self.readout_sub_var.set(self.readout_sub_var.get() + f"; background {cons['d_bg_model']:.1f} nm")
 
     def _present(self, res):
         if res.method == "background":
@@ -601,8 +701,17 @@ class DaxpesTab(ttk.Frame):
                                        "(or type the areas), set the attenuation lengths, then press Calculate & plot.")
             elif key == "result":
                 (self._draw_result_bg if res[0].method == "background" else self._draw_result)(fig, res)
-            else:
+            elif key == "spectra":
                 (self._draw_spectra_bg if res[0].method == "background" else self._draw_spectra)(fig)
+            elif key == "background":
+                (self._draw_spectra_bg(fig) if self.extra is not None else
+                 self._placeholder(fig, "The B1 fits are shown here with the Both-methods choice (with the background\n"
+                                        "method alone they are on the Spectra page)."))
+            elif self.extra is not None:
+                self._draw_consistency(fig)
+            else:
+                self._placeholder(fig, "The Both-methods choice compares the area and background thicknesses and fits the\n"
+                                       "ratio of the attenuation lengths from the two measurements together.")
             canvas.draw_idle()
 
     def _draw_result(self, fig, packed):
@@ -645,6 +754,62 @@ class DaxpesTab(ttk.Frame):
         ax2.text(0.98, 0.04, "dotted: thin-film limit λ_soft/λ_hard\ndash-dot: elastic limit 3λ_hard cosθ", transform=ax2.transAxes,
                  ha="right", va="bottom", fontsize=7, color=MUTED)
         fig.subplots_adjust(left=0.08, right=0.98, top=0.9, bottom=0.12, wspace=0.28)
+
+    def _draw_consistency(self, fig):
+        """Each measurement as a curve in the (thickness, λ ratio) plane; the joint solution is where they cross."""
+        res_a, lam_s, lam_h, theta, _ = self.result
+        res_b, joint, cons = self.extra["bg"], self.extra["joint"], self.extra["cons"]
+        c = math.cos(math.radians(theta))
+        fig.clear()
+        ax1, ax2 = fig.subplots(1, 2)
+        d_hi = max(2.5 * max(res_a.d_nm, res_b.d_simple_nm), 3.0 * lam_s * c)
+        ds = np.linspace(0.05 * d_hi, d_hi, 160)
+
+        def rho_for(q, which):
+            out = []
+            for dd in ds:
+                u = dd / (lam_s * c)
+                lo, hi = 1.0001, 60.0
+                f = lambda r: DX.joint_model(u, r)[which] - q            # noqa: E731   decreasing in rho
+                if f(lo) < 0 or f(hi) > 0:
+                    out.append(np.nan)
+                    continue
+                for _ in range(60):
+                    mid = 0.5 * (lo + hi)
+                    lo, hi = (mid, hi) if f(mid) > 0 else (lo, mid)
+                out.append(0.5 * (lo + hi))
+            return np.array(out)
+
+        ax1.plot(ds, rho_for(res_a.q, 0), color=SOFT_COLOUR, label="peak-area ratio")
+        ax1.plot(ds, rho_for(res_b.q, 1), color=HARD_COLOUR, label="B1 ratio")
+        ax1.axhline(lam_h / lam_s, color="#6b7280", ls=":", lw=1, label="entered λ ratio")
+        if joint is not None:
+            ax1.plot([joint.d_nm], [joint.rho], "ko", label="joint fit")
+            if joint.rho_se:
+                ax1.errorbar([joint.d_nm], [joint.rho], yerr=[joint.rho_se], xerr=[joint.d_se_nm or 0.0], color="black",
+                             capsize=3, lw=1)
+        ax1.set_ylim(1.0, max(4.0, 1.6 * lam_h / lam_s))
+        ax1.set_xlabel("Film thickness d (nm)")
+        ax1.set_ylabel("λ_hard / λ_soft")
+        ax1.set_title("Where the two measurements cross fixes d and the λ ratio", fontsize=9)
+        ax1.grid(alpha=0.3)
+        ax1.legend(fontsize=7, loc="upper right")
+        labels, values, errs, colours = ["area (Eq. 6)", "background 2d*cosθ", "background Eq. 8"], \
+            [res_a.d_nm, res_b.d_simple_nm, res_b.d_nm], [res_a.d_se_nm, res_b.d_se_nm, res_b.d_se_nm], \
+            [SOFT_COLOUR, HARD_COLOUR, "#f59e0b"]
+        if joint is not None:
+            labels.append("joint fit")
+            values.append(joint.d_nm)
+            errs.append(joint.d_se_nm)
+            colours.append("#111827")
+        ax2.bar(range(len(values)), values, yerr=[e or 0.0 for e in errs], color=colours, capsize=3)
+        ax2.set_xticks(range(len(values)))
+        ax2.set_xticklabels(labels, rotation=20, ha="right", fontsize=8)
+        ax2.axhline(res_a.limit_nm, color="#6b7280", ls="-.", lw=0.8)
+        ax2.set_ylabel("Thickness (nm)")
+        ax2.set_title("Thickness by each route" + (" (they agree)" if cons["agree"] else " (they DISAGREE)"), fontsize=9)
+        ax2.grid(alpha=0.3, axis="y")
+        fig.subplots_adjust(left=0.08, right=0.98, top=0.9, bottom=0.22, wspace=0.28)
 
     def _draw_result_bg(self, fig, packed):
         res, lam_s, lam_h, theta, _ = packed

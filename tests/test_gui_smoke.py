@@ -972,6 +972,41 @@ class DaxpesTabSmoke(unittest.TestCase):
         self.assertIn("wider range", err.call_args[0][1])
         self.assertIsNone(tab2.result)
 
+    def test_both_methods_compare_the_two_thicknesses_and_the_joint_fit_corrects_the_length_ratio(self):
+        import daxpes_tab as DXT
+        app, tab = self._bg_tab()
+        tab.method.set(DXT.METHOD_BOTH)
+        tab.band_fit.set(True)
+        tab.v["lam_soft"].set("1.83")                                   # Seah's lengths: ratio 2.18 against the true 2.016
+        tab.v["lam_hard"].set("3.99")
+        tab.calculate()
+        extra = tab.extra
+        self.assertIsNotNone(extra)
+        res_a, res_b, joint = tab.result[0], extra["bg"], extra["joint"]
+        self.assertEqual((res_a.method, res_b.method), ("area", "background"))
+        self.assertTrue(extra["cons"]["agree"])
+        self.assertTrue(joint.converged)
+        self.assertLess(abs(joint.rho - 2.016), abs(1.0 * (3.99 / 1.83) - 2.016))   # the data move the ratio to the truth
+        self.assertLess(abs(joint.d_nm - 6.0), abs(res_a.d_nm - 6.0))              # and the thickness
+        text = tab.details.get("1.0", "end")
+        for part in ("BACKGROUND METHOD (B1)", "COMPARISON", "JOINT FIT", "How much rests on the B1 settings"):
+            self.assertIn(part, text)
+        self.assertEqual(len(tab.figs["consistency"][0].axes), 2)
+        self.assertEqual(len(tab.figs["background"][0].axes), 4)
+        self.assertEqual(len(tab.figs["spectra"][0].axes), 4)                      # the area windows
+        self.assertIn("agree", tab.badge.cget("text"))
+
+    def test_the_band_fit_is_less_noisy_than_the_single_point_in_the_tab(self):
+        import daxpes_tab as DXT
+        app, tab = self._bg_tab()
+        tab.band_fit.set(False)
+        tab.calculate()
+        point = tab.result[0].d_se_nm
+        tab.band_fit.set(True)
+        tab.calculate()
+        self.assertLess(tab.result[0].d_se_nm, point)
+        self.assertIsNotNone(tab.b1_fits["soft"].band_be)
+
     def test_an_empty_tab_shows_a_prompt(self):
         app = _make_app(self)
         self.assertIsNone(app.daxpes.result)

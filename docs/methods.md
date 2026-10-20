@@ -773,6 +773,42 @@ flux or the cross-section of either source, but the *coverage* does need a peak 
 window and Shirley area as the area method, files or typed), from $c=(I/I_\infty)/(1-e^{-d/(\lambda\cos\theta)})$.
 Only elemental information comes out of the background: chemical states are not separated.
 
+### Both methods together: the attenuation-length ratio
+
+Both DAXPES methods rest on the **ratio** $\rho=\lambda_H/\lambda_X$ of the two attenuation lengths far more than on either length
+alone, and this is where the universal curves disagree most. For Ti 2p in TiO$_2$ Seah's curve [26] gives 1.83 and 3.99 nm
+($\rho=2.18$) and Murdoch's Table 1 [24] 1.87 and 3.77 nm ($\rho=2.02$): the soft lengths agree to 2 % and the hard ones differ by
+6 %. A true 3.0 nm film (60 % coverage) then reads 3.5 nm (+17 %) by peak areas and 4.0 nm (+35 %) by the background (the model
+reading $2d^*\cos\theta$), because $B_1$ behaves like a film of half the thickness, nearer the thin-film limit $\lambda_X/\lambda_H$
+where the ratio is most sensitive. The background method removes the need for references and for equal flux, not the dependence
+on $\rho$.
+
+What the two methods can do together is **measure** $\rho$. With $u = d/(\lambda_X\cos\theta)$ the paper's models give
+
+```math
+q_A = \frac{1-e^{-u/\rho}}{1-e^{-u}},\qquad q_B = \frac{1-e^{-u/(2\rho)}}{1-e^{-u/2}}
+```
+
+for the peak-area ratio and the $B_1$ ratio: two equations for the two unknowns $u$ and $\rho$, well conditioned (condition number
+about 10), so a film measured both ways fixes its thickness and its own length ratio with no assumed $\rho$; only $\lambda_X$ is
+needed to turn $u$ into nanometres. In the example above the exact ratios return $\rho=2.016$ and $d=3.0\times1.83/1.87=2.93$ nm
+(-2 %) from Seah's soft length, against +17 % from fixing the ratio. With realistic noise the scatter is the price: 1 % on both
+ratios gives $\rho$ to about 5 % and $d$ to 10 %, 4 % on the $B_1$ ratio gives $\rho$ to 10-19 % and $d$ to 30 %. The *Both methods*
+choice therefore fits $(u,\rho)$ to the two ratios with a Gaussian prior on $\rho$ centred on the lengths you entered (width
+set in the Method page, 10 % by default), reports the thickness and the length ratio the data prefer next to the one you entered, and
+says when the data pull away from the prior. The quoted errors are the posterior errors (data and prior) from the Jacobian, counting
+statistics only. It rests on the model of Eq. 5 (elastic scattering and the factor 2 are approximations) and on equal analysed areas,
+so read the recovered $\rho$ as a diagnostic.
+
+The tab also compares the two thicknesses like for like, the peak-area $d$ against $2d^*\cos\theta$ (Eq. 8's capped value is a
+different, empirical mapping), and flags a disagreement beyond two combined errors or 15 % with the likely causes: the length
+ratio, unequal analysed areas, or the $C$, $D$ and $\Delta E$ of the $B_1$ fit. The last is checked in a table: on the synthetic
+sample the single-point $B_1$ ratio at $\Delta E$ = 15, 20 and 30 eV is 0.656, 0.725 and 0.664 (thickness 6.3, 7.8 and 6.5 nm by Eq. 8
+for a true 6 nm film) because the hard-source tail is noisy at one point, and the silicon parameters instead of the oxide ones move it
+to 7.6 nm. The optional **band fit** (least squares over 15 to 45 eV above the peak, which is the same number for a spectrum that obeys Eq. 1)
+is about three times less noisy (hard-source $B_1$ scatter 9 against 27 eV$^2$), gives a ratio of 0.682 (true 0.687) and 6.9 nm, and is a
+variant of the paper's definition, so it is off by default.
+
 ## Spectrum simulation
 
 The Simulated spectrum pane draws what a given thickness would look like. It is an **estimate, not a fit**.

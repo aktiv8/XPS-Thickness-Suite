@@ -402,8 +402,19 @@ cross-section; you can also type B1 values from other software. The details give
 2d*cosθ reading and the 3λ cap; the spectra page shows the spectrum, the fitted background and the primary spectrum with the
 point where it is forced to zero. The coverage appears if you also give the film and thick-reference peak areas (open the
 reference spectra too, or type the areas). Only elemental information comes out, and the paper found it underestimates films
-thinner than about 3 nm. The sample pair `docs/sample/daxpes-bg-al-ka.vms` and `daxpes-bg-ag-la.vms` (synthetic: 6 nm covering
+thinner than about 3 nm. *Fit B1 over ΔE-15 to ΔE+15 eV* switches to a least-squares B1 over 15-45 eV above the peak, about
+three times less noisy than the single point of the paper. The sample pair `docs/sample/daxpes-bg-al-ka.vms` and `daxpes-bg-ag-la.vms` (synthetic: 6 nm covering
 60 %) gives B1 about 1190 and 790 eV², and a thickness of 5.6 ± 0.6 nm from Eq. 8 (6.2 nm from the exact B1 values).
+
+**Both methods.** If the film spectra are wide enough for the background and you also have the thick references, set *Method* to
+*Both methods, with a consistency check*. The tab runs the peak-area and the background method on the same data, compares the
+two thicknesses like for like and warns when they disagree, and fits the thickness and the ratio of the two attenuation lengths
+from both measurements together, with a prior (width on the Method page, 10 % by default) on the ratio you entered. The details
+show the ratio the data prefer next to yours, which is the check on the Seah or TPP-2M lengths; the *Consistency* page plots each
+measurement as a curve in the thickness-length-ratio plane, where they cross; the *Background (B1)* page shows the B1 fits; and a
+table lists B1 and the thickness for other ΔE, the band fit and the silicon cross-section, so you see how much rests on those
+choices. On the synthetic background sample with Seah's lengths (ratio 2.18) the peak areas alone read 6.5 nm for a true 6.0 nm, and
+the joint fit gives 6.1 ± 0.4 nm with a ratio of 2.07 ± 0.08 (true 2.02).
 
 ## Which tab should I use?
 

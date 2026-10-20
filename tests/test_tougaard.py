@@ -91,6 +91,46 @@ class Recovery(unittest.TestCase):
         self.assertTrue(fits[0] < fits[1] < fits[2])
 
 
+class Band(unittest.TestCase):
+    def test_the_band_fit_gives_the_same_b1_as_the_point_for_an_exact_spectrum(self):
+        for b1 in (100.0, 700.0):
+            x, j, _, _ = _spectrum(b1)
+            fit = TG.fit_b1(x, j, (452.0, 466.0), *OXIDE, smooth_n=1, band=TG.DEFAULT_BAND)
+            self.assertAlmostEqual(fit.b1, b1, delta=1e-3 * b1)
+            lo, hi = fit.band_be
+            self.assertAlmostEqual(lo, fit.centroid_be + 15.0, places=6)
+            self.assertAlmostEqual(hi, fit.centroid_be + 45.0, places=6)
+            self.assertAlmostEqual(fit.eval_be, 0.5 * (lo + hi), places=9)
+
+    def test_the_band_fit_is_much_less_noisy_than_the_single_point(self):
+        x, j, _, _ = _spectrum(700.0, area=20000.0, baseline=3.0)
+        counts = j * 40.0
+        window = (452.0, 466.0)
+        point = TG.b1_sigma(x, counts, 1 / 40.0, window, *OXIDE, draws=60)
+        band = TG.b1_sigma(x, counts, 1 / 40.0, window, *OXIDE, draws=60, band=TG.DEFAULT_BAND)
+        self.assertLess(band, 0.6 * point)
+
+    def test_a_band_that_runs_off_the_spectrum_is_refused(self):
+        x, j, _, _ = _spectrum(500.0, hi=30.0)
+        with self.assertRaisesRegex(ValueError, "wider range"):
+            TG.fit_b1(x, j, (452.0, 466.0), *OXIDE, band=(15.0, 45.0))
+
+
+class Sensitivity(unittest.TestCase):
+    def test_the_table_lists_each_cross_section_class_delta_e_and_the_band(self):
+        xs, js, _, _ = _spectrum(1200.0)
+        xh, jh, _, _ = _spectrum(800.0)
+        rows = TG.sensitivity_table(xs, js, xh, jh, (452.0, 466.0))
+        labels = [r[0] for r in rows]
+        self.assertEqual(len(rows), 8)                                              # 2 classes x (3 delta E + band)
+        self.assertIn("Metal oxides, DeltaE 30 eV", labels)
+        self.assertIn("Silicon, band 15-45 eV", labels)
+        oxide = {r[0]: r for r in rows if r[0].startswith("Metal oxides")}
+        for label, bs, bh in oxide.values():                                       # exact oxide spectra: every ΔE agrees
+            self.assertAlmostEqual(bs, 1200.0, delta=5.0)
+            self.assertAlmostEqual(bh, 800.0, delta=5.0)
+
+
 class Errors(unittest.TestCase):
     def test_a_spectrum_that_stops_too_soon_is_refused_with_the_energy_it_needs(self):
         x, j, _, _ = _spectrum(500.0, hi=20.0)

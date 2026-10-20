@@ -177,6 +177,120 @@ class Background(unittest.TestCase):
         self.assertIn("common", res.lam_band)
 
 
+class Joint(unittest.TestCase):
+    """The two ratios together fix the thickness and the attenuation-length ratio."""
+    LX, LH = 1.87, 3.77
+
+    def _ratios(self, d, lx=None, lh=None):
+        return DX.joint_model(d / (lx or self.LX), (lh or self.LH) / (lx or self.LX))
+
+    def test_the_model_is_the_area_and_the_b1_ratio(self):
+        qa, qb = DX.joint_model(3.0 / self.LX, self.LH / self.LX)
+        rx, rh = DX.forward_ratios(3.0, 1.0, self.LX, self.LH)
+        self.assertAlmostEqual(qa, rh / rx, places=12)
+        b1x, b1h = (1 - math.exp(-3.0 / (2 * lam)) for lam in (self.LX, self.LH))
+        self.assertAlmostEqual(qb, b1h / b1x, places=12)
+
+    def test_without_a_prior_the_data_recover_the_thickness_and_the_length_ratio_exactly(self):
+        for d in (1.5, 3.0, 6.0, 9.0):
+            qa, qb = self._ratios(d)
+            res = DX.joint_fit(qa, qb, self.LX, self.LH, prior_rel=None)
+            self.assertTrue(res.converged)
+            self.assertAlmostEqual(res.d_nm, d, places=6)
+            self.assertAlmostEqual(res.rho, self.LH / self.LX, places=6)
+            self.assertLess(res.condition, 30.0)                                  # well conditioned
+
+    def test_wrong_assumed_lengths_are_corrected_by_the_data(self):
+        # Seah's lengths (ratio 2.18) instead of Table 1 (2.02): the area method alone reads 17 % high at 3 nm
+        qa, qb = self._ratios(3.0)
+        ls, lh = 1.83, 3.99
+        rx, rh = DX.forward_ratios(3.0, 1.0, self.LX, self.LH)
+        area = DX.daxpes_thickness(qa, ls, lh)
+        self.assertAlmostEqual(area, 3.52, delta=0.02)
+        free = DX.joint_fit(qa, qb, ls, lh, prior_rel=None)
+        self.assertAlmostEqual(free.rho, self.LH / self.LX, places=6)
+        self.assertAlmostEqual(free.d_nm, 3.0 * ls / self.LX, places=6)            # only lambda_soft is needed: -2 %
+        self.assertLess(abs(free.d_nm - 3.0), abs(area - 3.0) / 5.0)
+
+    def test_the_prior_pulls_the_length_ratio_towards_the_entered_value_as_it_tightens(self):
+        qa, qb = self._ratios(3.0)
+        ls, lh = 1.83, 3.99
+        rhos = [DX.joint_fit(qa, qb, ls, lh, q_area_se=0.01 * qa, q_b1_se=0.03 * qb, prior_rel=p).rho
+                for p in (0.5, 0.1, 0.01)]
+        self.assertTrue(rhos[0] < rhos[1] < rhos[2])
+        self.assertAlmostEqual(rhos[2], lh / ls, delta=0.01)
+        self.assertAlmostEqual(rhos[0], self.LH / self.LX, delta=0.03)
+
+    def test_the_errors_of_the_data_alone_match_a_monte_carlo_estimate(self):
+        rng = np.random.default_rng(4)
+        qa, qb = self._ratios(4.0)
+        sa, sb = 0.01 * qa, 0.03 * qb
+        fit = DX.joint_fit(qa, qb, self.LX, self.LH, q_area_se=sa, q_b1_se=sb, prior_rel=None)
+        ds, rs = [], []
+        for _ in range(400):
+            r = DX.joint_fit(qa + rng.normal(0, sa), qb + rng.normal(0, sb), self.LX, self.LH, q_area_se=sa, q_b1_se=sb,
+                             prior_rel=None)
+            ds.append(r.d_nm)
+            rs.append(r.rho)
+        self.assertAlmostEqual(fit.d_se_nm / float(np.std(ds)), 1.0, delta=0.2)
+        self.assertAlmostEqual(fit.rho_se / float(np.std(rs)), 1.0, delta=0.2)
+
+    def test_a_prior_makes_the_posterior_errors_smaller_than_those_of_the_data_alone(self):
+        qa, qb = self._ratios(4.0)
+        kw = dict(q_area_se=0.01 * qa, q_b1_se=0.03 * qb)
+        free = DX.joint_fit(qa, qb, self.LX, self.LH, prior_rel=None, **kw)
+        with_prior = DX.joint_fit(qa, qb, self.LX, self.LH, prior_rel=0.10, **kw)
+        self.assertLess(with_prior.rho_se, free.rho_se)
+        self.assertLess(with_prior.d_se_nm, free.d_se_nm)
+
+    def test_inconsistent_ratios_pull_away_from_the_prior_and_say_so(self):
+        qa, _ = self._ratios(3.0)
+        _, qb = self._ratios(3.0, lh=2.4)                                             # a B1 ratio from a very different lambda
+        res = DX.joint_fit(qa, qb, self.LX, self.LH, q_area_se=0.005 * qa, q_b1_se=0.005 * qb, prior_rel=0.02)
+        self.assertTrue(any("prior" in n for n in res.notes))
+
+    def test_bad_inputs_are_refused(self):
+        with self.assertRaises(ValueError):
+            DX.joint_fit(0.7, 0.6, 3.0, 2.0)                                           # hard length shorter than soft
+        with self.assertRaises(ValueError):
+            DX.joint_fit(-0.1, 0.6, 1.87, 3.77)
+
+
+class Consistency(unittest.TestCase):
+    LX, LH, B0 = 1.87, 3.77, 1500.0
+
+    def _pair(self, d, scale_b1h=1.0):
+        rx, rh = DX.forward_ratios(d, 0.6, self.LX, self.LH)
+        b1x, b1h = (self.B0 * (1 - math.exp(-d / (2 * lam))) for lam in (self.LX, self.LH))
+        area = DX.analyse(rx * 1000, rh * 1000, self.LX, self.LH, 0.0, iinf_soft=1000.0, iinf_hard=1000.0)
+        bg = DX.analyse_background(b1x, b1h * scale_b1h, self.LX, self.LH, 0.0, 0.01 * b1x, 0.03 * b1h)
+        return area, bg
+
+    def test_q_se_is_available_when_sigmas_are_given(self):
+        area, bg = self._pair(3.0)
+        self.assertIsNone(area.q_se)
+        self.assertGreater(bg.q_se, 0.0)
+        rx, rh = DX.forward_ratios(3.0, 0.6, self.LX, self.LH)
+        res = DX.analyse(rx * 1000, rh * 1000, self.LX, self.LH, 0.0, iinf_soft=1000.0, iinf_hard=1000.0, sig_soft=5.0,
+                         sig_hard=5.0)
+        self.assertGreater(res.q_se, 0.0)
+
+    def test_consistent_data_agree_like_for_like(self):
+        area, bg = self._pair(4.0)
+        cons = DX.consistency(area, bg)
+        self.assertTrue(cons["agree"])
+        self.assertAlmostEqual(cons["d_bg_model"], 4.0, places=8)
+        self.assertEqual(cons["warnings"], [])
+
+    def test_a_b1_ratio_from_other_lengths_disagrees_and_the_message_names_the_causes(self):
+        area, bg = self._pair(4.0, scale_b1h=0.9)
+        joint = DX.joint_fit(area.q, bg.q, self.LX, self.LH, q_b1_se=bg.q_se, prior_rel=None)
+        cons = DX.consistency(area, bg, joint)
+        self.assertFalse(cons["agree"])
+        self.assertIn("ratio of the attenuation lengths", cons["warnings"][0])
+        self.assertIn("λ_hard/λ_soft", cons["warnings"][0])
+
+
 class Errors(unittest.TestCase):
     def test_the_hard_source_must_have_the_longer_attenuation_length(self):
         with self.assertRaises(ValueError):
