@@ -206,3 +206,53 @@ def write_daxpes_samples(soft_path: str, hard_path: str, **kwargs) -> None:
             "Made by synthetic.py.")
     VM.write(soft_path, pair["soft"], comment=note.format("Al Ka"))
     VM.write(hard_path, pair["hard"], comment=note.format("Ag La"))
+
+
+# Dual-anode XPS by the background method: wide spectra whose inelastic tail follows the Tougaard model exactly,
+# J = (1 - B1 M)^-1 F with F the primary peak, B1 = B0 (1 - exp(-d / (2 lam cos theta))) (Murdoch, Eq. 5) for the film and B0
+# for the thick reference. The film's peak area is cov I_inf (1 - exp(-d / (lam cos theta))): B1 does not depend on the coverage.
+DAXPES_B0_EV2 = 1500.0
+
+
+def daxpes_bg_pair(d_nm: float = 6.0, cov: float = 0.6, lam_soft: float = 1.87, lam_hard: float = 3.77,
+                   theta: float = 0.0, iinf_soft: float = 20000.0, iinf_hard: float = 6000.0, centre: float = 458.8,
+                   fwhm: float = 1.2, b0: float = DAXPES_B0_EV2, noise: bool = False, seed: int = 1, scans: int = 400,
+                   step: float = 0.1, be_range=(-12.0, 75.0), cd=(-1643.0, 0.0), baseline: float = 3.0) -> dict:
+    """
+    {"soft": [film block, reference block], "hard": [...]} like `daxpes_pair` but over a wide binding-energy range and with
+    the inelastic background of Tougaard's Eq. 1 built in, so that the B1 of each spectrum is known exactly.
+    """
+    import tougaard as TGD
+    rng = np.random.default_rng(seed)
+    c = math.cos(math.radians(theta))
+    be = np.arange(centre + be_range[0], centre + be_range[1] + step / 2, step)
+    m = TGD.kernel_matrix(be, *cd)
+    ident = np.eye(len(be))
+    out = {}
+    for key, (label, hv), lam, iinf in (("soft", DAXPES_SOURCES[0], lam_soft, iinf_soft),
+                                        ("hard", DAXPES_SOURCES[1], lam_hard, iinf_hard)):
+        blocks = []
+        for region, area, b1 in ((DAXPES_REGIONS[0], cov * iinf * (1.0 - math.exp(-d_nm / (lam * c))),
+                                  b0 * (1.0 - math.exp(-d_nm / (2.0 * lam * c)))),
+                                 (DAXPES_REGIONS[1], iinf, b0)):
+            f = area * sim.pseudo_voigt(be, centre, fwhm, 0.0)
+            rate = np.linalg.solve(ident - b1 * m, f) + baseline
+            counts = np.maximum(rate, 0.0) * scans * DWELL_S
+            if noise:
+                counts = rng.poisson(counts).astype(float)
+            blk = VM.Block(block_id=region, sample_id=f"synthetic {label}", species="Ti 2p", technique="XPS", hv_ev=hv,
+                           be_ev=be, counts=counts, transmission=np.full_like(be, TRANSMISSION), dwell_s=DWELL_S,
+                           scans=scans, pass_energy_ev=50.0, exp_values=[theta, None], exp_labels=["Tilt", "Azimuth"],
+                           exp_units=["d", "d"], comments=[f"Synthetic: B1 = {b1:.4g} eV^2, not a measurement"])
+            blocks.append(blk)
+        out[key] = blocks
+    return out
+
+
+def write_daxpes_bg_samples(soft_path: str, hard_path: str, **kwargs) -> None:
+    """The docs DAXPES background-method sample files: wide Ti 2p spectra with a Tougaard tail, one file per source."""
+    pair = daxpes_bg_pair(noise=True, **kwargs)
+    note = ("Synthetic dual-anode XPS with an inelastic background (Ti 2p, a patchy film and a thick reference) measured "
+            "with {}, not a measurement. Made by synthetic.py.")
+    VM.write(soft_path, pair["soft"], comment=note.format("Al Ka"))
+    VM.write(hard_path, pair["hard"], comment=note.format("Ag La"))

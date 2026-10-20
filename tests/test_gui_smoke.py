@@ -914,6 +914,64 @@ class DaxpesTabSmoke(unittest.TestCase):
             tab.calculate()
         self.assertIn("thick-reference", err.call_args[0][1])
 
+    def _bg_tab(self):
+        import tempfile
+        import synthetic as SY
+        import daxpes_tab as DXT
+        app = _make_app(self)
+        tab = app.daxpes
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        soft, hard = os.path.join(d, "soft.vms"), os.path.join(d, "hard.vms")
+        SY.write_daxpes_bg_samples(soft, hard, d_nm=6.0, cov=0.6, step=0.2)
+        for key, path, region in (("samp_soft", soft, "Ti 2p film"), ("ref_soft", soft, "Ti 2p reference"),
+                                  ("samp_hard", hard, "Ti 2p film"), ("ref_hard", hard, "Ti 2p reference")):
+            self.assertTrue(tab.load_file(key, path, region))
+        tab.method.set(DXT.METHOD_BG)
+        tab._method_changed()
+        tab.v["lam_soft"].set("1.87")
+        tab.v["lam_hard"].set("3.77")
+        return app, tab
+
+    def test_the_background_method_recovers_the_b1_values_the_thickness_and_the_coverage(self):
+        import math
+        import daxpes as DX
+        app, tab = self._bg_tab()
+        tab.calculate()
+        res = tab.result[0]
+        self.assertEqual(res.method, "background")
+        b1x, b1h = (1500.0 * (1 - math.exp(-6.0 / (2 * lam))) for lam in (1.87, 3.77))
+        self.assertAlmostEqual(res.b1_soft, b1x, delta=0.05 * b1x)
+        self.assertAlmostEqual(res.b1_hard, b1h, delta=0.12 * b1h)
+        want = DX.analyse_background(b1x, b1h, 1.87, 3.77).d_nm
+        self.assertLess(abs(res.d_nm - want), max(3 * (res.d_se_nm or 0.0), 1.0))
+        self.assertAlmostEqual(res.coverage, 0.6, delta=0.12)
+        self.assertIn("background method", tab.readout_sub_var.get())
+        self.assertEqual(len(tab.figs["result"][0].axes), 2)
+        self.assertEqual(len(tab.figs["spectra"][0].axes), 4)               # two sources, a full view and a zoom each
+        self.assertIn("Eq. 8", tab.details.get("1.0", "end"))
+
+    def test_typed_b1_values_need_no_spectra_and_a_short_spectrum_is_refused(self):
+        from unittest import mock
+        import daxpes as DX
+        import daxpes_tab as DXT
+        app = _make_app(self)
+        tab = app.daxpes
+        tab.method.set(DXT.METHOD_BG)
+        tab.v["lam_soft"].set("2.94")
+        tab.v["lam_hard"].set("5.29")
+        tab.v["b1_soft"].set("129")
+        tab.v["b1_hard"].set("115")
+        tab.calculate()
+        self.assertAlmostEqual(tab.result[0].d_nm, DX.analyse_background(129.0, 115.0, 2.94, 5.29).d_nm, places=9)
+        self.assertEqual(tab.figs["spectra"][0].axes[0].get_title() if tab.figs["spectra"][0].axes else "", "")
+        app2, tab2 = self._tab()                                           # the narrow area-method spectra
+        tab2.method.set(DXT.METHOD_BG)
+        with mock.patch("daxpes_tab.messagebox.showerror") as err:
+            tab2.calculate()
+        self.assertIn("wider range", err.call_args[0][1])
+        self.assertIsNone(tab2.result)
+
     def test_an_empty_tab_shows_a_prompt(self):
         app = _make_app(self)
         self.assertIsNone(app.daxpes.result)

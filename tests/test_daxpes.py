@@ -124,6 +124,59 @@ class LambdaBand(unittest.TestCase):
         self.assertIsNone(res.lam_band["common"][2])
 
 
+class Background(unittest.TestCase):
+    """Murdoch's background method (Eqs. 5, 7, 8)."""
+    # B1 values (eV^2) read from Murdoch's Fig. 9 for sputtered Si films, Si 2p, theta = 0 (Table 2: 2.7, 13.8, 15.7 nm)
+    TABLE_2 = ((100.0, 60.0, 2.7, 0.3), (129.0, 115.0, 13.8, 0.1), (136.0, 134.0, 15.7, 0.15))
+
+    def test_table_2_of_the_paper_is_reproduced(self):
+        for b1_x, b1_h, paper, tol in self.TABLE_2:
+            d = DX.analyse_background(b1_x, b1_h, 2.94, 5.29, 0.0).d_nm
+            self.assertAlmostEqual(d, paper, delta=tol, msg=f"B1 {b1_h}/{b1_x}")
+
+    def test_eq_7_recovers_d_star_from_the_eq_5_b1_ratio_and_eq_8_gives_the_stated_thickness(self):
+        lx, lh, b0 = 1.87, 3.77, 1500.0
+        for d_true in (1.0, 3.0, 6.0, 10.0):
+            b1x, b1h = (b0 * (1 - math.exp(-d_true / (2 * lam))) for lam in (lx, lh))
+            res = DX.analyse_background(b1x, b1h, lx, lh, 0.0)
+            self.assertAlmostEqual(res.d_star_nm, d_true / 2.0, places=8)
+            self.assertAlmostEqual(res.d_nm, 3 * lh * (1 - math.exp(-d_true / 2.0 / lh)), places=8)
+            self.assertAlmostEqual(res.d_simple_nm, d_true, places=8)
+
+    def test_the_thickness_saturates_at_the_elastic_limit_and_says_so(self):
+        res = DX.analyse_background(100.0, 99.9, 2.94, 5.29, 0.0)
+        self.assertLess(res.d_nm, res.limit_nm)
+        self.assertGreater(res.d_nm, 0.9 * res.limit_nm)
+        self.assertTrue(any("elastic limit" in w for w in res.warnings))
+        self.assertAlmostEqual(DX.analyse_background(100.0, 60.0, 2.94, 5.29, 60.0).limit_nm, 3 * 5.29 * 0.5, places=9)
+
+    def test_the_b1_ratio_must_lie_between_the_limits_and_both_must_be_positive(self):
+        with self.assertRaisesRegex(ValueError, "B1 ratio"):
+            DX.analyse_background(100.0, 40.0, 2.94, 5.29)             # below lam_X/lam_H = 0.556
+        with self.assertRaisesRegex(ValueError, "B1 ratio"):
+            DX.analyse_background(100.0, 101.0, 2.94, 5.29)
+        with self.assertRaises(ValueError):
+            DX.analyse_background(0.0, 60.0, 2.94, 5.29)
+
+    def test_the_coverage_comes_from_the_peak_areas_and_the_thickness_from_b1_alone(self):
+        lx, lh, b0 = 1.87, 3.77, 1500.0
+        b1x, b1h = (b0 * (1 - math.exp(-6.0 / (2 * lam))) for lam in (lx, lh))
+        rx, rh = DX.forward_ratios(DX.analyse_background(b1x, b1h, lx, lh).d_nm, 0.6, lx, lh)
+        res = DX.analyse_background(b1x, b1h, lx, lh, 0.0, i_soft=rx * 1000, iinf_soft=1000.0, i_hard=rh * 400,
+                                    iinf_hard=400.0)
+        self.assertAlmostEqual(res.coverage, 0.6, places=9)
+        self.assertIsNone(DX.analyse_background(b1x, b1h, lx, lh, 0.0).coverage)
+
+    def test_the_error_matches_a_monte_carlo_estimate_and_the_lambda_band_is_present(self):
+        rng = np.random.default_rng(2)
+        res = DX.analyse_background(1200.0, 880.0, 1.87, 3.77, 0.0, 24.0, 40.0)
+        ds = [DX.analyse_background(1200.0 + rng.normal(0, 24.0), 880.0 + rng.normal(0, 40.0), 1.87, 3.77).d_nm
+              for _ in range(3000)]
+        self.assertAlmostEqual(res.d_se_nm / float(np.std(ds)), 1.0, delta=0.1)
+        self.assertIn("ratio", res.lam_band)
+        self.assertIn("common", res.lam_band)
+
+
 class Errors(unittest.TestCase):
     def test_the_hard_source_must_have_the_longer_attenuation_length(self):
         with self.assertRaises(ValueError):

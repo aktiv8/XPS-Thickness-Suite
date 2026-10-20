@@ -83,7 +83,7 @@ only where they were checked against the paper itself or a bibliographic record.
 25. B. J. Murdoch, P. Y. Le, J. G. Partridge and D. G. McCulloch, Quantitative depth-dependent analysis using the inelastic
     scattering backgrounds from X-ray photoelectron spectroscopy and hard X-ray photoelectron spectroscopy, *Surf. Interface
     Anal.* **55**, 373-382 (2023). DOI [10.1002/sia.7206](https://doi.org/10.1002/sia.7206). The background-based thickness
-    that the DAXPES background method builds on (not yet in the Suite).
+    that the DAXPES background method builds on.
 
 26. M. P. Seah, Simple universal curve for the energy-dependent electron attenuation length for all materials, *Surf.
     Interface Anal.* **44**, 1353-1359 (2012). DOI [10.1002/sia.5033](https://doi.org/10.1002/sia.5033). The attenuation-length

@@ -394,6 +394,17 @@ type the ratio of the thick-reference areas, hard over soft: you then get the th
 `docs/sample/daxpes-tio2-al-ka.vms` and `daxpes-tio2-ag-la.vms` (synthetic: 3 nm covering 60 %, with a reference region in each
 file) gives about 3.0 nm and 60 % with λ = 1.87 and 3.77 nm. Both sources must analyse the **same area** of the sample.
 
+**Background method (no reference sample).** Set *Method* to *Inelastic background B1* and open only the two film spectra,
+each recorded over a wide range: from a flat level below the peak to at least 30 eV (the ΔE on the Method page) above it. The tab
+fits the Tougaard background parameter B1 of each (the Method page offers the cross-section parameters C and D: oxides or silicon,
+or type them) and solves Murdoch's Eqs. 7 and 8, so the thickness needs no reference and no knowledge of either source's flux or
+cross-section; you can also type B1 values from other software. The details give d*, the thickness from Eq. 8, the simple
+2d*cosθ reading and the 3λ cap; the spectra page shows the spectrum, the fitted background and the primary spectrum with the
+point where it is forced to zero. The coverage appears if you also give the film and thick-reference peak areas (open the
+reference spectra too, or type the areas). Only elemental information comes out, and the paper found it underestimates films
+thinner than about 3 nm. The sample pair `docs/sample/daxpes-bg-al-ka.vms` and `daxpes-bg-ag-la.vms` (synthetic: 6 nm covering
+60 %) gives B1 about 1190 and 790 eV², and a thickness of 5.6 ± 0.6 nm from Eq. 8 (6.2 nm from the exact B1 values).
+
 ## Which tab should I use?
 
 | Your situation | Use |

@@ -231,6 +231,19 @@ class ClaimsMatchTheCode(unittest.TestCase):
                 with open(fresh, "rb") as a, open(committed, "rb") as b:
                     self.assertEqual(a.read(), b.read(), "docs/sample is stale: run  python docs/make_sample_data.py")
 
+    def test_the_daxpes_background_sample_files_are_what_the_generator_writes(self):
+        import tempfile
+        spec = importlib.util.spec_from_file_location("make_sample_data", os.path.join(DOCS, "make_sample_data.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        import synthetic
+        with tempfile.TemporaryDirectory() as d:
+            soft, hard = os.path.join(d, "soft.vms"), os.path.join(d, "hard.vms")
+            synthetic.write_daxpes_bg_samples(soft, hard, d_nm=mod.DAXPES_BG_THICKNESS_NM, cov=mod.DAXPES_COVERAGE)
+            for fresh, committed in ((soft, mod.DAXPES_BG_SOFT), (hard, mod.DAXPES_BG_HARD)):
+                with open(fresh, "rb") as a, open(committed, "rb") as b:
+                    self.assertEqual(a.read(), b.read(), "docs/sample is stale: run  python docs/make_sample_data.py")
+
     def test_fitted_components_worked_example(self):
         sample = os.path.join(DOCS, "sample", "si-native-oxide-arxps-fitted.vms")
         sub, ov = A.SUBSTRATES["Si (metal/elemental)"], A.OVERLAYERS["SiO2"]

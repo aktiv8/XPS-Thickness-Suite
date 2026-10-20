@@ -111,7 +111,8 @@ def ratio_limits(lam_soft: float, lam_hard: float) -> Tuple[float, float]:
     return lam_soft / lam_hard, 1.0
 
 
-def daxpes_thickness(q: float, lam_soft: float, lam_hard: float, theta_deg: float = 0.0) -> float:
+def daxpes_thickness(q: float, lam_soft: float, lam_hard: float, theta_deg: float = 0.0,
+                     label: str = "area ratio") -> float:
     """
     Eq. 6 solved for d by bisection, where q = (I_H/I_inf,H) / (I_X/I_inf,X). q rises monotonically from lam_X/lam_H
     (d -> 0) to 1 (d -> infinity); outside that range there is no solution and a ValueError says why.
@@ -120,10 +121,10 @@ def daxpes_thickness(q: float, lam_soft: float, lam_hard: float, theta_deg: floa
     if not math.isfinite(q):
         raise ValueError("The area ratio is not a number.")
     if q <= lo:
-        raise ValueError(f"The area ratio {q:.3g} is at or below the thin-film limit λ_soft/λ_hard = {lo:.3g}: the film is "
+        raise ValueError(f"The {label} {q:.3g} is at or below the thin-film limit λ_soft/λ_hard = {lo:.3g}: the film is "
                          "thinner than the two sources can resolve, or the reference ratio is wrong.")
     if q >= hi:
-        raise ValueError(f"The area ratio {q:.3g} is at or above 1: both sources already see a thick film (or the "
+        raise ValueError(f"The {label} {q:.3g} is at or above 1: both sources already see a thick film (or the "
                          "reference ratio is wrong), so the thickness is not determined.")
     c = math.cos(math.radians(theta_deg))
 
@@ -158,6 +159,11 @@ class DaxpesResult:
     coverage_paper: Optional[float] = None   # hard-source single-source thickness / DAXPES thickness (Murdoch, Fig. 11)
     limit_nm: float = 0.0                    # elastic limit 3 lam_H cos theta
     warnings: List[str] = field(default_factory=list)
+    method: str = "area"                     # "area" (Eq. 6) or "background" (Eqs. 7-8)
+    d_star_nm: Optional[float] = None        # background method: the thickness measure d* of Eq. 7
+    d_simple_nm: Optional[float] = None      # background method: 2 d* cos(theta), the thin-film reading without the 3-lambda cap
+    b1_soft: Optional[float] = None          # background method: B1 of each source (eV^2)
+    b1_hard: Optional[float] = None
     lam_band: Dict[str, Optional[Tuple[float, float, Optional[float], Optional[float]]]] = field(default_factory=dict)
     # lam_band["ratio"] / ["common"] = (d at -band, d at +band, coverage at -band, coverage at +band) when the hard-source
     # attenuation length only / both lengths together are changed by +-`band` (None if a variant has no solution)
@@ -256,4 +262,81 @@ def analyse(i_soft: float, i_hard: float, lam_soft: float, lam_hard: float, thet
     if d < 0.3 * lam_soft * c:
         res.warnings.append("Very thin film: the two sources differ little, so the thickness is sensitive to errors in "
                             "the reference ratio and the attenuation lengths.")
+    return res
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Background method (Murdoch 2026, Eqs. 5, 7, 8): the ratio of the inelastic-background parameters B1 of the two sources
+# ---------------------------------------------------------------------------------------------------------------
+#
+# B1 / B0 = 1 - exp(-d / (2 lam cos theta))                                                          (5)
+# B1_H / B1_X = (1 - e^(-d*/lam_H)) / (1 - e^(-d*/lam_X)),    d* = d / (2 cos theta) if elastic scattering is ignored  (7)
+# d = (1 - exp(-d* / (lam_H cos theta))) 3 lam_H cos theta                                           (8)
+#
+# B0 (the thick-sample value) cancels in the ratio, which needs no reference sample and no knowledge of the flux or
+# cross-section of either source, only that the two sources analyse the same material (B0 equal for both). Eq. 7 has the
+# same form as Eq. 6 with theta = 0, so d* is found by the same solver. Eq. 8 then converts d* to the film thickness and
+# caps it at 3 lam_H cos theta, the elastic limit of the hard-source electrons. For a thin film Eq. 8 gives about 3 d*
+# where the simple relation of Eq. 5 gives 2 d* cos theta, so both are returned.
+
+
+def background_thickness(b1_soft: float, b1_hard: float, lam_soft: float, lam_hard: float, theta_deg: float = 0.0
+                         ) -> Tuple[float, float, float, float]:
+    """(d, d*, 2 d* cos(theta), B1 ratio) from the B1 values (eV^2) of the soft and hard source; d is Eq. 8."""
+    if not (b1_soft > 0 and b1_hard > 0):
+        raise ValueError("Both B1 values must be positive.")
+    q = b1_hard / b1_soft
+    d_star = daxpes_thickness(q, lam_soft, lam_hard, 0.0, label="B1 ratio")
+    c = math.cos(math.radians(theta_deg))
+    d = 3.0 * lam_hard * c * (-math.expm1(-d_star / (lam_hard * c)))
+    return d, d_star, 2.0 * d_star * c, q
+
+
+def analyse_background(b1_soft: float, b1_hard: float, lam_soft: float, lam_hard: float, theta_deg: float = 0.0,
+                       sig_b1_soft: Optional[float] = None, sig_b1_hard: Optional[float] = None,
+                       i_soft: Optional[float] = None, iinf_soft: Optional[float] = None,
+                       i_hard: Optional[float] = None, iinf_hard: Optional[float] = None,
+                       band: float = 0.10) -> DaxpesResult:
+    """
+    Thickness from the B1 values of the two sources and, if a peak area and a thick-reference area are given for the soft
+    source (and the hard one), the coverage c = (I_X/I_inf,X) / (1 - exp(-d/(lam_X cos theta))) of the film.
+    """
+    d, d_star, d_simple, q = background_thickness(b1_soft, b1_hard, lam_soft, lam_hard, theta_deg)
+    c = math.cos(math.radians(theta_deg))
+    res = DaxpesResult(d, q, method="background", d_star_nm=d_star, d_simple_nm=d_simple, b1_soft=b1_soft,
+                       b1_hard=b1_hard, limit_nm=ELASTIC_LIMIT_FACTOR * lam_hard * c)
+    res.d_se_nm = _propagate(lambda v: background_thickness(v[0], v[1], lam_soft, lam_hard, theta_deg)[0],
+                             [b1_soft, b1_hard], [sig_b1_soft, sig_b1_hard])
+    if i_soft is not None and iinf_soft is not None and i_soft > 0 and iinf_soft > 0:
+        r_x = i_soft / iinf_soft
+        res.coverage = r_x / film_factor(d, lam_soft, theta_deg)
+        if r_x < 1.0:
+            res.t_soft_nm = single_source_thickness(r_x, lam_soft, theta_deg)
+        if i_hard is not None and iinf_hard is not None and i_hard > 0 and 0 < i_hard / iinf_hard < 1.0:
+            res.t_hard_nm = single_source_thickness(i_hard / iinf_hard, lam_hard, theta_deg)
+            res.coverage_paper = res.t_hard_nm / d
+        if res.coverage > 1.05:
+            res.warnings.append(f"The coverage comes out at {100 * res.coverage:.0f} %: above 100 % means the B1 values, "
+                                "the areas or the attenuation lengths are inconsistent.")
+    if band:
+        for name, variants in (("ratio", ((lam_soft, lam_hard * (1 - band)), (lam_soft, lam_hard * (1 + band)))),
+                               ("common", ((lam_soft * (1 - band), lam_hard * (1 - band)),
+                                           (lam_soft * (1 + band), lam_hard * (1 + band))))):
+            got = []
+            for ls, lh in variants:
+                try:
+                    dd = background_thickness(b1_soft, b1_hard, ls, lh, theta_deg)[0]
+                except ValueError:
+                    got.append(None)
+                    continue
+                cov = ((i_soft / iinf_soft) / film_factor(dd, ls, theta_deg)
+                       if i_soft and iinf_soft else None)
+                got.append((dd, cov))
+            res.lam_band[name] = None if None in got else (got[0][0], got[1][0], got[0][1], got[1][1])
+    if d > NEAR_LIMIT * res.limit_nm:
+        res.warnings.append(f"The thickness is close to the elastic limit 3 λ_hard cos θ = {res.limit_nm:.1f} nm; a "
+                            "thicker film would read about the same (Eq. 8 saturates there).")
+    if d_star < 0.2 * lam_soft:
+        res.warnings.append("Very thin film: the two B1 values differ little, and the paper found the background method "
+                            "underestimates the thickness of ultra-thin films (below about 3 nm).")
     return res

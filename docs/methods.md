@@ -729,9 +729,49 @@ while changing both by 10 % gives 2.7-3.3 nm and the same 60 %. Against the leng
 TPP-2M times 0.9 within 15 %, which is the scatter to expect from either; for another material, type the lengths in. The peak areas come from the same windows and
 Shirley background as the ARXPS tab, with one window in binding energy for all four spectra; they may also be typed in.
 
-Not implemented yet: the paper's second method, which needs no reference sample because it uses the ratio of the inelastic
-background intensities measured with the two sources instead of the peak areas, and which is the same idea as the
-background-based thickness of Murdoch and co-workers [25].
+### Background method
+
+The paper's second method needs **no reference sample**: instead of peak areas it uses the Tougaard inelastic-background
+parameter $B_1$ of the film spectrum of each source [24] (the idea of the background-based thickness of Murdoch and co-workers
+[25]). The peak and its tail are described by Tougaard's equation, with $J$ the measured spectrum, $F$ the primary spectrum, $E$
+the kinetic energy and $T$ the energy lost,
+
+```math
+F(E) = J(E) - B_1\int_E^{E_{max}} J(E')\,K(E'-E)\,dE',\qquad K(T) = \frac{T}{(C-T^2)^2 + D\,T^2}
+```
+
+with $C=-1643$ eV$^2$ and $D=0$ for metal oxides and $C=325$ eV$^2$, $D=96$ eV$^2$ for silicon. $B_1$ (in eV$^2$) is the one number
+that makes $F$ zero at a point $\Delta E$ (30 eV in the paper; 15-30 is allowed) below the centroid of the peak in kinetic
+energy, that is above it in binding energy. It is a measure of the fraction of the photoelectrons that have lost about one
+quantum of energy, so it grows with the film thickness and is smaller for the faster electrons of the hard source. In the
+model of the paper $B_1/B_0 = 1-e^{-d/(2\lambda\cos\theta)}$, with $B_0$ the value for a thick sample, and $B_0$ cancels in the ratio
+of the two sources, which gives $d^*$ (equal to $d/(2\cos\theta)$ when elastic scattering is ignored) and then the thickness:
+
+```math
+\frac{B_1^{H}}{B_1^{X}} = \frac{1-e^{-d^*/\lambda_H}}{1-e^{-d^*/\lambda_X}},\qquad
+d = 3\lambda_H\cos\theta\left(1-e^{-d^*/(\lambda_H\cos\theta)}\right)
+```
+
+The first equation has the form of Eq. 6 with $\theta=0$, so the tab solves it with the same bisection and refuses a ratio outside
+$(\lambda_X/\lambda_H, 1)$. The second converts $d^*$ to a thickness and caps it at the elastic limit $3\lambda_H\cos\theta$. It is
+the equation of the paper, and it reproduces the paper's Table 2 (sputtered Si on polystyrene, $\theta=0$, B$_1$ values from its
+Fig. 9: 2.9, 13.8 and 15.6 nm against the published 2.7, 13.8 and 15.7 nm). Its small-$d^*$ behaviour is worth knowing: it gives about
+$3d^*$ where the simple thin-film relation from the $B_1$ model is $2d^*\cos\theta$, so the tab also prints $2d^*\cos\theta$ (the
+two readings cross near $d^*\approx 0.86\,\lambda_H$), and the paper reports that the method underestimates ultra-thin films (below about
+3 nm) in its simulations. How $\cos\theta$ enters Eqs. 7 and 8 off normal emission could not be verified from the paper (its
+Fig. 4 caption prints $d^*=2d\cos\theta$ against the text's $d/2\cos\theta$), so the tab uses the equations as printed and the
+check against Table 2 holds only at normal emission.
+
+The tab fits $B_1$ from the spectrum itself: the zero level is the mean of the first points at the low-binding-energy end
+(which must be flat and free of peaks), the spectrum is smoothed over five points for the fit, the centroid is found
+self-consistently from $F$, and $B_1$ is the ratio of the (smoothed, zero-level-corrected) signal at $E_c+\Delta E$ to the
+integral of Eq. 1 there. The spectrum must therefore run from a flat level before the peak to at least $\Delta E$ above the
+centroid, and the peak window sets the range used for the centroid and the area. The uncertainty is the counting-statistics part
+(a Monte Carlo over Poisson draws of every count); it does not include the choice of $C$ and $D$, of $\Delta E$, or of the
+background range, which move $B_1$ much more. Because $B_1$ is relative to the peak area, it does not depend on the coverage, the
+flux or the cross-section of either source, but the *coverage* does need a peak area and a thick-reference area (the same
+window and Shirley area as the area method, files or typed), from $c=(I/I_\infty)/(1-e^{-d/(\lambda\cos\theta)})$.
+Only elemental information comes out of the background: chemical states are not separated.
 
 ## Spectrum simulation
 

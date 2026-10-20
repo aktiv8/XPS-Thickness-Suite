@@ -18,6 +18,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 import arxps as AR
 import daxpes as DX
 import depthprofile as DP
+import tougaard as TGD
 import vamas as VM
 from gui_common import BADGE, CARD, MUTED, Tooltip, _to_float
 
@@ -26,6 +27,8 @@ SLOTS = (("samp_soft", "Film, soft source"), ("samp_hard", "Film, hard source"),
          ("ref_soft", "Thick reference, soft"), ("ref_hard", "Thick reference, hard"))
 NO_REGION = "(none)"
 CUSTOM = "custom (type the values)"
+METHOD_AREA = "Peak areas (Eq. 6)"
+METHOD_BG = "Inelastic background B1 (Eqs. 7-8)"
 AL_SEAH = "Seah 2012 universal curve (S3)"
 AL_TPP = "TPP-2M IMFP x AL/IMFP"
 
@@ -53,11 +56,16 @@ class DaxpesTab(ttk.Frame):
         self.align = tk.BooleanVar(value=True)
         self.material = tk.StringVar(value="TiO2")
         self.al_method = tk.StringVar(value=AL_SEAH)
+        self.method = tk.StringVar(value=METHOD_AREA)
+        self.cross = tk.StringVar(value=next(iter(TGD.CROSS_SECTIONS)))
+        self.b1_fits = {}                      # "soft"/"hard" -> tougaard.B1Fit of the last background calculation
         keys = ("be", "w_lo", "w_hi", "theta", "lam_soft", "lam_hard", "hv_soft", "hv_hard", "factor", "i_soft", "i_hard",
-                "inf_soft", "inf_hard", "rho")
+                "inf_soft", "inf_hard", "rho", "c", "d", "delta_e", "b1_soft", "b1_hard")
         self.v = {k: tk.StringVar() for k in keys}
         self.v["theta"].set("0")
         self.v["factor"].set("0.9")
+        self.v["delta_e"].set(f"{TGD.DEFAULT_DELTA_E:g}")
+        self._cross_changed()
         self.v["hv_soft"].set(f"{DX.SOURCES['Al Kα']:g}")
         self.v["hv_hard"].set(f"{DX.SOURCES['Ag Lα']:g}")
 
@@ -82,9 +90,32 @@ class DaxpesTab(ttk.Frame):
 
     def _build_setup(self, parent):
         card = ttk.LabelFrame(parent, text="  Data  ", style="Card.TLabelframe", padding=(10, 2, 10, 4) if self.compact else 10)
+        top = ttk.Frame(card, style="Card.TFrame")
+        top.grid(row=0, column=0, sticky="ew")
+        ttk.Label(top, text="Method:", style="Card.TLabel").pack(side="left")
+        mcb = ttk.Combobox(top, textvariable=self.method, values=[METHOD_AREA, METHOD_BG], state="readonly", width=32)
+        mcb.pack(side="left", padx=6)
+        mcb.bind("<<ComboboxSelected>>", lambda e: self._method_changed())
+        Tooltip(mcb, "Peak areas: the film and thick-reference peak areas of each source (Eq. 6), which needs a reference "
+                     "for each source. Inelastic background: the Tougaard background parameter B1 of the film spectrum of "
+                     "each source (Eqs. 7-8), which needs no reference sample.")
+        self.setup_nb = nb = ttk.Notebook(card, style="Sub.TNotebook")
+        nb.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        pages = []
+        for title in ("Spectra", "Lengths", "Method"):
+            page = ttk.Frame(nb, style="Card.TFrame", padding=6)
+            nb.add(page, text=title)
+            pages.append(page)
+        self._build_spectra_page(pages[0])
+        self._build_lengths_page(pages[1])
+        self._build_method_page(pages[2])
+        self._method_changed()
+        return card
+
+    def _build_spectra_page(self, card):
         r = 0
         ttk.Label(card, text="One core level, measured with a soft and a hard X-ray source. Spectra come from VAMAS "
-                             "files (or type the areas below).", style="CardMuted.TLabel", wraplength=360,
+                             "files (or type the areas on the Method page).", style="CardMuted.TLabel", wraplength=360,
                   justify="left").grid(row=r, column=0, columnspan=4, sticky="w")
         for key, title in SLOTS:
             r += 1
@@ -100,8 +131,8 @@ class DaxpesTab(ttk.Frame):
         r += 1
         self._entry(card, "be", r, "Peak BE (eV):", "Binding energy of the peak, to centre the window. Blank: the tallest "
                     "peak of the film spectrum.")
-        self._entry(card, "w_lo", r, "Window from:", "Lower binding energy of the integration window (Shirley background "
-                    "over this range, the same for every spectrum).", col=2, width=7)
+        self._entry(card, "w_lo", r, "Window from:", "Lower binding energy of the peak window (the Shirley background of "
+                    "the area method, and the range for the centroid and area of the background method).", col=2, width=7)
         r += 1
         self._entry(card, "w_hi", r, "to:", "Upper binding energy of the window.", col=2, width=7)
         b = ttk.Button(card, text="Auto window", command=self._auto_clicked)
@@ -111,11 +142,11 @@ class DaxpesTab(ttk.Frame):
         c = ttk.Checkbutton(card, text="Follow small energy shifts between spectra (charging)", variable=self.align,
                             style="Card.TCheckbutton")
         c.grid(row=r, column=0, columnspan=4, sticky="w")
-        Tooltip(c, "Shift each spectrum onto the film spectrum of the soft source before integrating, so one window "
-                   "serves all four.")
-        r += 1
-        ttk.Separator(card).grid(row=r, column=0, columnspan=4, sticky="ew", pady=4)
-        r += 1
+        Tooltip(c, "Area method: shift each spectrum onto the film spectrum of the soft source before integrating, so "
+                   "one window serves all four.")
+
+    def _build_lengths_page(self, card):
+        r = 0
         self._entry(card, "theta", r, "θ from normal (°):", "Take-off angle from the surface NORMAL, the same for both "
                     "sources.")
         r += 1
@@ -146,9 +177,35 @@ class DaxpesTab(ttk.Frame):
         b.grid(row=r, column=3, sticky="w")
         Tooltip(b, "Estimate both attenuation lengths at the kinetic energy each source gives the peak. Replace them "
                    "with values you trust; the thickness scales with them.")
+
+    def _build_method_page(self, card):
+        r = 0
+        ttk.Label(card, text="Inelastic background (B1) method", style="ColHead.TLabel").grid(row=r, column=0, columnspan=4,
+                                                                                            sticky="w")
         r += 1
-        ttk.Label(card, text="Areas typed here override the files (blank = from the spectra); a typed ratio overrides the reference spectra", style="ColHead.TLabel").grid(
-            row=r, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        cb = ttk.Combobox(card, textvariable=self.cross, values=list(TGD.CROSS_SECTIONS) + [CUSTOM], state="readonly",
+                          width=34)
+        cb.grid(row=r, column=0, columnspan=4, sticky="w", pady=2)
+        cb.bind("<<ComboboxSelected>>", lambda e: self._cross_changed())
+        Tooltip(cb, "The parameters C and D of Tougaard's universal inelastic cross-section K(T) = T/((C-T²)²+D T²) "
+                    "(Eq. 2): Murdoch used C = -1643, D = 0 for metal oxides and C = 325, D = 96 for silicon.")
+        r += 1
+        self._entry(card, "c", r, "C (eV²):", "Cross-section parameter C of Eq. 2 (eV²).", width=8)
+        self._entry(card, "d", r, "D (eV²):", "Cross-section parameter D of Eq. 2 (eV²).", col=2, width=7)
+        r += 1
+        self._entry(card, "delta_e", r, "ΔE (eV):", "B1 is the value that makes the primary spectrum zero this far above "
+                    "the peak in binding energy (15-30 eV; 30 in the paper). The spectrum must extend at least that far, "
+                    "and should start on a flat zero level below the peak.", width=8)
+        r += 1
+        self._entry(card, "b1_soft", r, "B1 soft (eV²):", "Type B1 instead of fitting it from the spectrum (for example "
+                    "from other software).", width=8)
+        self._entry(card, "b1_hard", r, "B1 hard:", "B1 of the hard-source spectrum.", col=2, width=7)
+        r += 1
+        ttk.Separator(card).grid(row=r, column=0, columnspan=4, sticky="ew", pady=4)
+        r += 1
+        ttk.Label(card, text="Peak areas typed here override the files (blank = from the spectra); a typed ratio "
+                             "overrides the reference spectra", style="ColHead.TLabel", wraplength=360,
+                  justify="left").grid(row=r, column=0, columnspan=4, sticky="w")
         r += 1
         self._entry(card, "i_soft", r, "I film soft:", "Peak area of the film with the soft source.")
         self._entry(card, "i_hard", r, "I film hard:", "Peak area of the film with the hard source.", col=2, width=7)
@@ -157,8 +214,16 @@ class DaxpesTab(ttk.Frame):
         self._entry(card, "inf_hard", r, "I∞ hard:", "Peak area of the thick reference with the hard source.", col=2, width=7)
         r += 1
         self._entry(card, "rho", r, "or I∞H/I∞X:", "Ratio of the thick-reference areas, hard over soft, if you have no "
-                    "reference spectra. Then only the thickness comes out, not the coverage.")
-        return card
+                    "reference spectra (area method). Then only the thickness comes out, not the coverage.")
+
+    def _cross_changed(self):
+        cd = TGD.CROSS_SECTIONS.get(self.cross.get())
+        if cd is not None:
+            self.v["c"].set(f"{cd[0]:g}")
+            self.v["d"].set(f"{cd[1]:g}")
+
+    def _method_changed(self):
+        self._clear_result()
 
     def _build_results(self, parent):
         card = ttk.LabelFrame(parent, text="  Calculation  ", style="Card.TLabelframe",
@@ -304,7 +369,8 @@ class DaxpesTab(ttk.Frame):
 
     def _clear_result(self):
         self.result = None
-        self._set_badge("idle", "Inputs changed: press Calculate & plot")
+        if hasattr(self, "badge"):
+            self._set_badge("idle", "Inputs changed: press Calculate & plot")
 
     # --- calculation --------------------------------------------------------------------------------------
     def _num(self, key, label, positive=False):
@@ -343,6 +409,8 @@ class DaxpesTab(ttk.Frame):
         if not 0.0 <= theta < 90.0:
             raise ValueError("θ must be from 0 up to (not including) 90 degrees.")
         lam_s, lam_h = self._num("lam_soft", "λ soft", True), self._num("lam_hard", "λ hard", True)
+        if self.method.get() == METHOD_BG:
+            return self._calculate_background(theta, lam_s, lam_h)
         if not self.v["w_lo"].get() or not self.v["w_hi"].get():
             if any(self._block(s) is not None for s in self.slots.values()):
                 self.auto_window()
@@ -388,7 +456,100 @@ class DaxpesTab(ttk.Frame):
         self._present(res)
         self._draw()
 
+    def _calculate_background(self, theta, lam_s, lam_h):
+        """Murdoch's background method: B1 of the film spectrum of each source, then Eqs. 7 and 8."""
+        c, d = self._num("c", "C"), self._num("d", "D")
+        if d < 0:
+            raise ValueError("D must not be negative.")
+        delta_e = self._num("delta_e", "ΔE", positive=True)
+        typed = {"soft": self._optional("b1_soft", "B1 soft"), "hard": self._optional("b1_hard", "B1 hard")}
+        for slot in self.slots.values():
+            slot.extraction = None
+        self.b1_fits = {}
+        any_file = any(self._block(sl) is not None for sl in self.slots.values())
+        if any_file and (not self.v["w_lo"].get() or not self.v["w_hi"].get()):
+            self.auto_window()
+        win = None
+        if self.v["w_lo"].get() and self.v["w_hi"].get():
+            win = (self._num("w_lo", "Window from"), self._num("w_hi", "Window to"))
+            if win[1] <= win[0]:
+                raise ValueError("The window must run from a lower to a higher binding energy.")
+        b1, sig = {}, {}
+        for src in ("soft", "hard"):
+            if typed[src] is not None:
+                b1[src], sig[src] = typed[src], None
+                continue
+            blk = self._block(self.slots["samp_" + src])
+            if blk is None:
+                raise ValueError(f"Open the film spectrum measured with the {src} source (or type 'B1 {src}').")
+            if win is None:
+                raise ValueError("Set the peak window (Auto window) first.")
+            be, y = self._spectrum(blk)
+            fit = TGD.fit_b1(be, y, win, c, d, delta_e=delta_e)
+            tf = AR._transmission_factor(blk, blk.hv_ev - 0.5 * (win[0] + win[1]))
+            scale = 1.0 / ((blk.scans or 1) * (blk.dwell_s or 1.0)) / max(tf, 1e-12)
+            b1[src] = fit.b1
+            sig[src] = TGD.b1_sigma(be, blk.counts, scale, win, c, d, delta_e=delta_e, draws=40)
+            self.b1_fits[src] = fit
+        # the coverage needs the peak areas of the film and a thick reference (files or typed); it is optional here
+        vals = {}
+        typed_a = {"samp_soft": self._optional("i_soft", "I film soft"), "samp_hard": self._optional("i_hard", "I film hard"),
+                   "ref_soft": self._optional("inf_soft", "I∞ soft"), "ref_hard": self._optional("inf_hard", "I∞ hard")}
+        ref_blk = self._block(self.slots["samp_soft"])
+        reference = self._spectrum(ref_blk) if ref_blk is not None else None
+        for key, _ in SLOTS:
+            if typed_a[key] is not None:
+                vals[key] = typed_a[key]
+            elif win is not None and self._block(self.slots[key]) is not None:
+                try:
+                    vals[key] = self._extract(self.slots[key], AR.Window(*win), None if key == "samp_soft" else reference)[0]
+                except ValueError:
+                    vals[key] = None
+        res = DX.analyse_background(b1["soft"], b1["hard"], lam_s, lam_h, theta, sig.get("soft"), sig.get("hard"),
+                                    i_soft=vals.get("samp_soft"), iinf_soft=vals.get("ref_soft"),
+                                    i_hard=vals.get("samp_hard"), iinf_hard=vals.get("ref_hard"))
+        self.result = (res, lam_s, lam_h, theta, None)
+        self._present(res)
+        self._draw()
+
+    def _present_background(self, res):
+        err = f" ± {res.d_se_nm:.2f}" if res.d_se_nm else ""
+        self.readout_var.set(f"{res.d_nm:.2f} nm")
+        self.readout_sub_var.set(
+            f"background method, Eq. 8{err}; B1 {res.b1_soft:.0f} / {res.b1_hard:.0f} eV²" +
+            (f"; coverage {100 * res.coverage:.0f} %" if res.coverage is not None else "; no coverage (no reference areas)"))
+        self._set_badge("warn" if res.warnings else "ok", res.warnings[0] if res.warnings else
+                        "The B1 ratio lies inside the range the two sources can resolve")
+        lines = [f"==> THICKNESS d = {res.d_nm:.3f} nm  ({res.d_nm * 10:.2f} Angstrom)" + (f" ± {res.d_se_nm:.3f}" if res.d_se_nm else ""),
+                 "", "Murdoch (2026) background method: B1 of each source's Tougaard background,",
+                 f"  B1 soft = {res.b1_soft:.1f} eV², B1 hard = {res.b1_hard:.1f} eV²,  B1_H/B1_X = {res.q:.4f}",
+                 f"  Eq. 7:  d* = {res.d_star_nm:.3f} nm  (d* = d / (2 cos θ) when elastic scattering is ignored)",
+                 f"  Eq. 8:  d = 3 λ_hard cos θ (1 - exp(-d*/(λ_hard cos θ))) = {res.d_nm:.3f} nm",
+                 f"  simple thin-film reading 2 d* cos θ = {res.d_simple_nm:.3f} nm (no 3λ cap)"]
+        if res.coverage is not None:
+            lines.append(f"coverage = (I/I∞) / (1 - exp(-d/λcosθ)) = {100 * res.coverage:.1f} %")
+        if res.t_soft_nm is not None:
+            lines.append(f"single-source peak-area thickness, soft: {res.t_soft_nm:.3f} nm" +
+                         (f", hard: {res.t_hard_nm:.3f} nm" if res.t_hard_nm is not None else ""))
+        lines.append(f"elastic limit 3 λ_hard cos θ = {res.limit_nm:.2f} nm")
+        for key, text in (("ratio", "λ_hard ±10 % (the λ ratio)"), ("common", "both λ ±10 %")):
+            band = res.lam_band.get(key)
+            if band is None:
+                lines.append(f"if {text}: no solution for one of the two")
+            else:
+                cov = (f", coverage {100 * band[2]:.0f} to {100 * band[3]:.0f} %" if band[2] is not None else "")
+                lines.append(f"if {text}: d = {band[0]:.2f} to {band[1]:.2f} nm" + cov)
+        lines += [""] + [f"! {w}" for w in res.warnings]
+        lines += ["", "B1 does not depend on the coverage, the flux or the cross-section of either source; the uncertainty "
+                      "is the counting-statistics part only (Monte Carlo)."]
+        self.details.configure(state="normal")
+        self.details.delete("1.0", "end")
+        self.details.insert("1.0", "\n".join(lines))
+        self.details.configure(state="disabled")
+
     def _present(self, res):
+        if res.method == "background":
+            return self._present_background(res)
         err = f" ± {res.d_se_nm:.2f}" if res.d_se_nm else ""
         self.readout_var.set(f"{res.d_nm:.2f} nm")
         parts = [f"DAXPES thickness{err}", "independent of the coverage"]
@@ -439,9 +600,9 @@ class DaxpesTab(ttk.Frame):
                 self._placeholder(fig, "Open the soft- and hard-source spectra of the film and of a thick reference\n"
                                        "(or type the areas), set the attenuation lengths, then press Calculate & plot.")
             elif key == "result":
-                self._draw_result(fig, res)
+                (self._draw_result_bg if res[0].method == "background" else self._draw_result)(fig, res)
             else:
-                self._draw_spectra(fig)
+                (self._draw_spectra_bg if res[0].method == "background" else self._draw_spectra)(fig)
             canvas.draw_idle()
 
     def _draw_result(self, fig, packed):
@@ -484,6 +645,63 @@ class DaxpesTab(ttk.Frame):
         ax2.text(0.98, 0.04, "dotted: thin-film limit λ_soft/λ_hard\ndash-dot: elastic limit 3λ_hard cosθ", transform=ax2.transAxes,
                  ha="right", va="bottom", fontsize=7, color=MUTED)
         fig.subplots_adjust(left=0.08, right=0.98, top=0.9, bottom=0.12, wspace=0.28)
+
+    def _draw_result_bg(self, fig, packed):
+        res, lam_s, lam_h, theta, _ = packed
+        c = math.cos(math.radians(theta))
+        fig.clear()
+        ax1, ax2 = fig.subplots(1, 2)
+        dmax = max(2.0 * res.d_star_nm, 3.5 * lam_h, 1.0)
+        ds = np.linspace(1e-3 * dmax, dmax, 400)
+        q = (1 - np.exp(-ds / lam_h)) / (1 - np.exp(-ds / lam_s))
+        ax1.plot(ds, q, color="#374151")
+        ax1.axhline(res.q, color="#dc2626", lw=1)
+        ax1.axvline(res.d_star_nm, color="black", lw=1)
+        ax1.axhline(lam_s / lam_h, color="#6b7280", lw=0.8, ls=":")
+        ax1.set_ylim(0, 1.05)
+        ax1.set_xlabel("d* (nm)")
+        ax1.set_ylabel("B1(hard) / B1(soft)")
+        ax1.set_title("Eq. 7: the B1 ratio fixes d*", fontsize=9)
+        ax1.grid(alpha=0.3)
+        eq8 = 3.0 * lam_h * c * (1 - np.exp(-ds / (lam_h * c)))
+        ax2.plot(ds, eq8, color=HARD_COLOUR, label="Eq. 8: 3 λ_hard cosθ (1 - exp(-d*/(λ_hard cosθ)))")
+        ax2.plot(ds, 2 * ds * c, color="#6b7280", ls="--", lw=1, label="2 d* cosθ (thin film, no cap)")
+        ax2.axhline(res.limit_nm, color="#6b7280", lw=0.8, ls="-.")
+        ax2.plot([res.d_star_nm], [res.d_nm], "o", color="black")
+        ax2.set_ylim(0, max(1.2 * res.limit_nm, 1.2 * res.d_nm))
+        ax2.set_xlabel("d* (nm)")
+        ax2.set_ylabel("Film thickness d (nm)")
+        ax2.set_title("Eq. 8: d from d* (capped at 3λ)", fontsize=9)
+        ax2.grid(alpha=0.3)
+        ax2.legend(fontsize=7, loc="lower right")
+        fig.subplots_adjust(left=0.08, right=0.98, top=0.9, bottom=0.12, wspace=0.28)
+
+    def _draw_spectra_bg(self, fig):
+        fig.clear()
+        if not self.b1_fits:
+            self._placeholder(fig, "B1 values were typed in: there are no spectra to show.")
+            return
+        axes = fig.subplots(2, len(self.b1_fits), squeeze=False)
+        for col, (src, fit) in enumerate(self.b1_fits.items()):
+            colour = SOFT_COLOUR if src == "soft" else HARD_COLOUR
+            for row in range(2):
+                ax = axes[row][col]
+                ax.plot(fit.be, fit.j, color=colour, lw=0.7, label="spectrum")
+                ax.plot(fit.be, fit.background, color="black", lw=1.0, label=f"B1 = {fit.b1:.0f} eV²")
+                ax.plot(fit.be, fit.f, color="#16a34a", lw=0.7, label="primary F")
+                ax.axvline(fit.centroid_be, color="#6b7280", lw=0.7, ls=":")
+                ax.axvline(fit.eval_be, color="#dc2626", lw=0.8, ls="--")
+                ax.set_xlim(fit.be[-1], fit.be[0])
+                ax.grid(alpha=0.3)
+                ax.tick_params(labelsize=7)
+                if row == 1:
+                    top = max(3.0 * float(np.interp(fit.eval_be, fit.be, fit.background)), 1e-9)
+                    ax.set_ylim(-0.5 * top, 2 * top)
+                    ax.set_xlabel("Binding energy (eV)", fontsize=8)
+                else:
+                    ax.set_title(f"{src} source: F = 0 at {fit.eval_be:.1f} eV", fontsize=8)
+                    ax.legend(fontsize=6, loc="upper left")
+        fig.subplots_adjust(left=0.09, right=0.99, top=0.92, bottom=0.1, wspace=0.25, hspace=0.18)
 
     def _draw_spectra(self, fig):
         fig.clear()
