@@ -21,6 +21,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 
 import arxps as AR
 import depthlayers as DL
+import depthmem as MM
 import depthmurdoch as DM
 import depthprofile as DP
 import depthreg as DR
@@ -32,6 +33,9 @@ SRC_FITS = "Fitted states (CasaXPS)"
 SRC_REGIONS = "Whole regions (Shirley)"
 SRC_AUTO = "Fits where available, else regions"
 MAX_LAYERS = 4
+MEM_IMFP_G1 = "G-1 (Gries) from each species' material"
+MEM_IMFP_OWN = "own λ per species, energy-scaled"
+MEM_CUSTOM = "custom"
 MUR_SIGMA_ONE = "1 (as in the paper)"
 MUR_SIGMA_COUNTS = "counting statistics"
 MUR_FROM_SPECIES = "Species (areas / RSF)"
@@ -98,6 +102,18 @@ class DepthTab(ttk.Frame):
         self.mur_prior = tk.BooleanVar(value=True)
         self.mur_note = tk.StringVar(value="")
         self.mur_csv = None                  # (names, angles, X) of a loaded at% table
+        self.mem_depth, self.mem_dz = tk.StringVar(value="15"), tk.StringVar(value="0.1")
+        self.mem_alphas, self.mem_rel = tk.StringVar(value="100, 30, 10, 3, 1, 0.3, 0.1"), tk.StringVar(value="6")
+        self.mem_free = tk.StringVar(value="")
+        self.mem_nlayers = tk.StringVar(value="3")
+        self.mem_stop, self.mem_iter = tk.BooleanVar(value=True), tk.BooleanVar(value=True)
+        self.mem_model = tk.StringVar(value=MEM_IMFP_G1)
+        self.mem_note = tk.StringVar(value="")
+        self.mem_mats = []                   # per species: dict(name, preset, formula, density, category)
+        self.mem_layer_rows = []             # per start-model layer: dict(thick, comps [StringVar per active species])
+        self.mem_active = []                 # names of the species the start-model grid was built for
+        self.mem_fit = None                  # depthmem.MemFit
+        self.mem_ens = None                  # (z, mean, sd) of a noise ensemble
         self.mur_grid = []                   # per peak: dict(name, lam, order, thick, species)
         self.mur_fit = None                  # depthmurdoch.MurdochFit
         self.mur_scurve = None               # [(log10 alpha, chi2, R)]
@@ -345,6 +361,7 @@ class DepthTab(ttk.Frame):
         self._default_layers()
         self._default_bulk()
         self._mur_rebuild_grid()
+        self._mem_rebuild_grids()
         self.status.set(f"{len(species)} species at {len(species[0].angles)} angles; set each λ for your material.")
         self.refresh()
 
@@ -394,6 +411,7 @@ class DepthTab(ttk.Frame):
         self._build_layers_page(nb)
         self._build_profile_page(nb)
         self._build_murdoch_page(nb)
+        self._build_mem_page(nb)
         return frame
 
     def _canvas(self, parent):
@@ -1333,6 +1351,329 @@ class DepthTab(ttk.Frame):
                      fontsize=9)
         fig.subplots_adjust(left=0.07, right=0.98, top=0.92, bottom=0.12, wspace=0.28, hspace=0.55)
         self.mur_canvas.draw_idle()
+
+    # --- ARXPS MEMS (Rossi) ---------------------------------------------------------------------------------
+    def _build_mem_page(self, nb):
+        page = ttk.Frame(nb, style="Card.TFrame", padding=4)
+        nb.add(page, text="ARXPS MEMS (Rossi)")
+        bar = ttk.Frame(page, style="Card.TFrame")
+        bar.pack(side="top", fill="x")
+        for text, var, width, tip in (
+                ("Depth (nm):", self.mem_depth, 5, "How deep the profile goes; the paper used 150 layers of 1 Å (15 nm). Make it "
+                 "several times the longest attenuation length."),
+                ("Layer (nm):", self.mem_dz, 5, "Thickness of each depth layer (0.1 nm = 1 Å as in the paper)."),
+                ("α schedule:", self.mem_alphas, 22, "The regularising parameter α of Q = αS - C/2, one calculation cycle each, "
+                 "from large (smooth, close to the start model) to small (fits the data). The paper used 100 down to 1, "
+                 "0.1 only for simple cases."),
+                ("σ (% of X):", self.mem_rel, 4, "Relative 1-sigma error of every apparent concentration (6 % is about the "
+                 "standard deviation of the paper's ±10 % uniform error)."),
+                ("Free to (nm):", self.mem_free, 5, "Layers deeper than this are held at the composition of the bottom row of the "
+                 "start model (a known bulk, as in the paper). Blank: all layers free.")):
+            ttk.Label(bar, text=text, style="Card.TLabel").pack(side="left", padx=(0, 2))
+            e = ttk.Entry(bar, textvariable=var, width=width)
+            e.pack(side="left", padx=(0, 8))
+            Tooltip(e, tip)
+        bar2 = ttk.Frame(page, style="Card.TFrame")
+        bar2.pack(side="top", fill="x", pady=(3, 0))
+        cb = ttk.Combobox(bar2, textvariable=self.mem_model, values=[MEM_IMFP_G1, MEM_IMFP_OWN], state="readonly", width=32)
+        cb.pack(side="left", padx=(0, 6))
+        Tooltip(cb, "How the electron IMFP in each material is obtained. G-1 (Gries 1996, as in the paper) needs a formula and a "
+                    "density per species and the kinetic energy of its electrons; NIST cautions it can be off by up to 50 % for "
+                    "some materials. The other uses each species' own λ on the species table, scaled to the electron energy "
+                    "as E^0.75.")
+        for text, var, tip in (("Iterate IMFP", self.mem_iter, "Recompute the attenuation lengths from the composition of the "
+                                "profile (the layer-weighted mean of the paper's Eqs. 4-7) until none changes by 1 %."),
+                               ("Stop at χ²/N ≤ 1", self.mem_stop, "Stop the α schedule at the first (largest) α whose chi-squared "
+                                "per data point is within the noise.")):
+            ck = ttk.Checkbutton(bar2, text=text, variable=var, style="Card.TCheckbutton")
+            ck.pack(side="left", padx=(0, 6))
+            Tooltip(ck, tip)
+        for text, cmd, tip in (("Run MEM", self._mem_run, "Maximise Q = αS - C/2 from the start model below."),
+                               ("Start-model ensemble", self._mem_ensemble, "Repeat from 8 start models whose layer thicknesses "
+                                "vary by ±30 % and show the mean and spread."),
+                               ("Reset start model", self._mem_reset_start, "Rebuild the start model from the Stratification "
+                                "depth order, one species per layer."),
+                               ("Guess materials", self._mem_guess_materials, "Set each species' material from its name.")):
+            b = ttk.Button(bar2, text=text, command=cmd)
+            b.pack(side="left", padx=(0, 4))
+            Tooltip(b, tip)
+        ttk.Label(page, textvariable=self.mem_note, style="CardMuted.TLabel", wraplength=900, justify="left").pack(
+            side="top", fill="x", pady=(2, 0))
+        mid = ttk.Frame(page, style="Card.TFrame")
+        mid.pack(side="top", fill="x", pady=(2, 0))
+        self.mem_mat_frame = ttk.Frame(mid, style="Card.TFrame")
+        self.mem_mat_frame.pack(side="left", anchor="n", padx=(0, 16))
+        self.mem_start_frame = ttk.Frame(mid, style="Card.TFrame")
+        self.mem_start_frame.pack(side="left", anchor="n")
+        lower = ttk.Frame(page, style="Card.TFrame")
+        lower.pack(side="bottom", fill="x", pady=(6, 0))
+        cols = ("sp", "area", "peak", "lam", "rdp", "note")
+        heads = ("Species", "Area (nm)", "Peak at (nm)", "λ in layer 0 → deep (nm)", "RDP", "Note")
+        widths = (90, 80, 90, 170, 70, 380)
+        self.mem_table = ttk.Treeview(lower, columns=cols, show="headings", height=4)
+        for col, h, w in zip(cols, heads, widths):
+            self.mem_table.heading(col, text=h)
+            self.mem_table.column(col, width=w, anchor="w" if col in ("sp", "note") else "e", stretch=(col == "note"))
+        self.mem_table.pack(fill="x")
+        self.mem_fig, self.mem_canvas = self._canvas(page)
+
+    def _mem_species_names(self):
+        return [sp.name for sp, row in zip(self.species, self.rows) if row["use"].get()]
+
+    def _mem_rebuild_grids(self):
+        """A material per species and a start model (layers x active species), both rebuilt when the species change."""
+        for w in self.mem_mat_frame.winfo_children():
+            w.destroy()
+        old = {m["name"]: m for m in self.mem_mats}
+        self.mem_mats = []
+        if not self.species:
+            self._mem_rebuild_start()
+            self._draw_mem()
+            return
+        for c, h in enumerate(("Use", "Species", "Material", "Formula", "ρ (g/cm³)", "Class")):
+            ttk.Label(self.mem_mat_frame, text=h, style="ColHead.TLabel").grid(row=0, column=c, padx=4, sticky="w")
+        for i, (sp, row) in enumerate(zip(self.species, self.rows)):
+            keep = old.get(sp.name)
+            preset_name = keep["preset"].get() if keep else MM.guess_preset(sp.name)
+            mat = MM.MATERIAL_PRESETS.get(preset_name)
+            preset = tk.StringVar(value=preset_name)
+            formula = tk.StringVar(value=keep["formula"].get() if keep else (mat.formula if mat else "SiO2"))
+            density = tk.StringVar(value=keep["density"].get() if keep else (f"{mat.density:g}" if mat else "2.2"))
+            cat = tk.StringVar(value=keep["category"].get() if keep else (mat.category if mat else "auto"))
+            ck = ttk.Checkbutton(self.mem_mat_frame, variable=row["use"], style="Card.TCheckbutton",
+                                 command=self._mem_use_changed)
+            ck.grid(row=i + 1, column=0, padx=4)
+            ttk.Label(self.mem_mat_frame, text=sp.name, style="Card.TLabel").grid(row=i + 1, column=1, sticky="w", padx=4)
+            pc = ttk.Combobox(self.mem_mat_frame, textvariable=preset, values=list(MM.MATERIAL_PRESETS) + [MEM_CUSTOM],
+                              state="readonly", width=20)
+            pc.grid(row=i + 1, column=2, padx=4, pady=1)
+            pc.bind("<<ComboboxSelected>>", lambda e, p=preset, f=formula, d=density, c=cat: self._mem_preset_chosen(p, f, d, c))
+            Tooltip(pc, "The material the electrons of this species travel through when they come from a layer made of "
+                        "this species (G-1 input).")
+            ttk.Entry(self.mem_mat_frame, textvariable=formula, width=9).grid(row=i + 1, column=3, padx=4)
+            ttk.Entry(self.mem_mat_frame, textvariable=density, width=6).grid(row=i + 1, column=4, padx=4)
+            cc = ttk.Combobox(self.mem_mat_frame, textvariable=cat, values=["auto", "inorganic", "organic"], state="readonly",
+                              width=9)
+            cc.grid(row=i + 1, column=5, padx=4)
+            Tooltip(cc, "G-1 constants: auto uses the periodic-table class for an element and organic for a formula with C and "
+                        "H, inorganic otherwise.")
+            self.mem_mats.append(dict(name=sp.name, preset=preset, formula=formula, density=density, category=cat))
+        self._mem_rebuild_start()
+        self._draw_mem()
+
+    def _mem_preset_chosen(self, preset, formula, density, cat):
+        mat = MM.MATERIAL_PRESETS.get(preset.get())
+        if mat is not None:
+            formula.set(mat.formula)
+            density.set(f"{mat.density:g}")
+            cat.set(mat.category)
+
+    def _mem_guess_materials(self):
+        for m in self.mem_mats:
+            m["preset"].set(MM.guess_preset(m["name"]))
+            self._mem_preset_chosen(m["preset"], m["formula"], m["density"], m["category"])
+        self.mem_note.set("Materials guessed from the species names: check each one.")
+
+    def _mem_use_changed(self):
+        self.mem_fit = self.mem_ens = None
+        self._mem_rebuild_start()
+        self._draw_mem()
+
+    def _mem_reset_start(self):
+        self._mem_rebuild_start()
+        self.mem_note.set("Start model rebuilt from the Stratification depth order.")
+
+    def _mem_rebuild_start(self):
+        """Layers x active species: thickness and composition (%) of each layer of the start model; the last is the bulk."""
+        for w in self.mem_start_frame.winfo_children():
+            w.destroy()
+        self.mem_layer_rows = []
+        names = self._mem_species_names()
+        self.mem_active = names
+        if len(names) < 2:
+            return
+        try:
+            n_layers = max(2, min(int(float(self.mem_nlayers.get())), len(names), 6))
+        except ValueError:
+            n_layers = min(3, len(names))
+        ttk.Label(self.mem_start_frame, text="Start model (entropy prior): layers", style="ColHead.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w")
+        e = ttk.Entry(self.mem_start_frame, textvariable=self.mem_nlayers, width=3)
+        e.grid(row=0, column=2, sticky="w")
+        e.bind("<Return>", lambda ev: self._mem_rebuild_start())
+        Tooltip(e, "Number of layers including the bulk (press Enter). Each layer has a thickness and a composition in %.")
+        heads = ["Layer", "d (nm)"] + names
+        for c, h in enumerate(heads):
+            ttk.Label(self.mem_start_frame, text=h, style="ColHead.TLabel").grid(row=1, column=c, padx=3, sticky="w")
+        order = self._mem_depth_order(names)
+        for r in range(n_layers):
+            bulk = r == n_layers - 1
+            ttk.Label(self.mem_start_frame, text="bulk" if bulk else str(r + 1), style="Card.TLabel").grid(
+                row=r + 2, column=0, padx=3)
+            thick = tk.StringVar(value="" if bulk else "1.0")
+            if not bulk:
+                ttk.Entry(self.mem_start_frame, textvariable=thick, width=5).grid(row=r + 2, column=1, padx=3)
+            comps = []
+            for j, name in enumerate(names):
+                if bulk:
+                    share = [k for k in range(len(names)) if order.index(k) >= r]
+                    v = 100.0 / len(share) if j in share else 0.0
+                else:
+                    v = 100.0 if order[r] == j else 0.0
+                var = tk.StringVar(value=f"{v:g}")
+                ttk.Entry(self.mem_start_frame, textvariable=var, width=5).grid(row=r + 2, column=2 + j, padx=3, pady=1)
+                comps.append(var)
+            self.mem_layer_rows.append(dict(thick=thick, comps=comps))
+
+    def _mem_depth_order(self, names):
+        """Indices of the active species from the shallowest to the deepest by their Stratification depth."""
+        try:
+            sps = [sp for sp in self.active() if sp.name in names]
+            rows = DP.stratification(sps, None, None, False, self._max_angle())
+            depth = {sp.name: (r.z_nm if r.z_nm is not None else 1e9) for sp, r in zip(sps, rows)}
+        except (ValueError, IndexError):
+            depth = {}
+        return sorted(range(len(names)), key=lambda k: depth.get(names[k], 1e9))
+
+    def _mem_collect(self):
+        """(names, angles, X, lam, ke, materials, thickness, compositions, settings) from the species and the grids."""
+        species = self.active()
+        if len(species) < 3:
+            raise ValueError("Tick at least three species: the entropy method needs more components than a two-layer fit.")
+        names, angles, x, _ = DM.inputs_from_species(species, self._max_angle())
+        if names != self.mem_active or not self.mem_layer_rows:
+            self._mem_rebuild_start()
+        lam = [sp.lam_nm for sp in species]
+        ke = [sp.ke_ev for sp in species]
+        by_name = {m["name"]: m for m in self.mem_mats}
+        mats = []
+        for nm in names:
+            m = by_name.get(nm)
+            dens = _to_float(m["density"].get()) if m else None
+            if m is None or not dens or dens <= 0:
+                raise ValueError(f"Give a formula and a positive density for {nm} (G-1 needs them).")
+            mats.append(MM.Material(m["formula"].get().strip(), dens, m["category"].get()))
+        thick, comps = [], []
+        for r, row in enumerate(self.mem_layer_rows):
+            vals = [_to_float(v.get()) for v in row["comps"]]
+            if any(v is None or v < 0 for v in vals) or sum(vals) <= 0:
+                raise ValueError(f"Layer {r + 1} of the start model needs non-negative compositions that are not all zero.")
+            comps.append(vals)
+            if r < len(self.mem_layer_rows) - 1:
+                d = _to_float(row["thick"].get())
+                if d is None or d <= 0:
+                    raise ValueError(f"Give a positive thickness for layer {r + 1} of the start model.")
+                thick.append(d)
+        try:
+            depth, dz = float(self.mem_depth.get()), float(self.mem_dz.get())
+            alphas = [float(a) for a in self.mem_alphas.get().replace(";", ",").split(",") if a.strip()]
+            rel = float(self.mem_rel.get()) / 100.0
+            free = _to_float(self.mem_free.get()) if self.mem_free.get().strip() else None
+        except ValueError:
+            raise ValueError("Enter numbers for the depth, the layer thickness, the α schedule and σ.")
+        if dz <= 0 or depth < 10 * dz or not alphas or min(alphas) <= 0 or rel <= 0:
+            raise ValueError("The depth must be at least ten layers, α and σ positive.")
+        if sum(thick) >= depth:
+            raise ValueError("The layers of the start model are deeper than the depth range.")
+        return names, angles, x, lam, ke, mats, thick, comps, dict(depth=depth, dz=dz, alphas=alphas, rel=rel, free=free)
+
+    def _mem_args(self, names, ke, mats, st, lam):
+        kw = dict(sigma=st["rel"], alphas=st["alphas"], iterate_imfp=self.mem_iter.get(), dz_nm=st["dz"],
+                  free_depth_nm=st["free"], target_chi2_per_point=1.0 if self.mem_stop.get() else None)
+        if self.mem_model.get() == MEM_IMFP_G1:
+            kw["lam_mat"] = MM.g1_lambda_matrix(ke, mats)
+        else:
+            kw["ke_ev"] = ke
+        return kw
+
+    def _mem_run(self):
+        try:
+            names, angles, x, lam, ke, mats, thick, comps, st = self._mem_collect()
+            z = MM.depths(int(round(st["depth"] / st["dz"])), st["dz"])
+            start = MM.layered_model(thick, comps, z, floor=0.01)
+            kw = self._mem_args(names, ke, mats, st, lam)
+            self.mem_note.set("Running…")
+            self.update_idletasks()
+            self.mem_fit = MM.fit_mem(names, angles, x, lam, start, **kw)
+        except ValueError as exc:
+            self.mem_note.set(str(exc))
+            return
+        self.mem_ens = None
+        f = self.mem_fit
+        warn = MM.g1_range_warning(ke) if self.mem_model.get() == MEM_IMFP_G1 else None
+        cyc = "; ".join(f"α {c['alpha']:g}: χ²/N {c['chi2_per_point']:.2f}" for c in f.cycles)
+        ifc = ", ".join(f"{d:.2f} nm ({a} → {b})" for d, a, b in f.interfaces()[:5])
+        self.mem_note.set(f"Cycles: {cyc}. " + (f"Interfaces at {ifc}. " if ifc else "") + " ".join(f.notes) +
+                          (" " + warn if warn else ""))
+        self._draw_mem()
+
+    def _mem_ensemble(self):
+        try:
+            names, angles, x, lam, ke, mats, thick, comps, st = self._mem_collect()
+            kw = self._mem_args(names, ke, mats, st, lam)
+            kw.pop("dz_nm")
+            self.mem_note.set("Fitting from 8 start models…")
+            self.update_idletasks()
+            z, mean, sd, fits = MM.ensemble_mem(names, angles, x, lam, thick, comps, 0.3, 8, 0, st["depth"], st["dz"], **kw)
+        except ValueError as exc:
+            self.mem_note.set(str(exc))
+            return
+        self.mem_ens = (z, mean, sd)
+        self.mem_note.set(f"Mean and spread of 8 fits from start models with the layer thicknesses varied by ±30 %: largest "
+                          f"spread {100 * float(sd.max()):.0f} % in a layer fraction.")
+        if self.mem_fit is None:
+            self._mem_run()
+        self._draw_mem()
+
+    def _draw_mem(self):
+        fig = self.mem_fig
+        fig.clear()
+        self.mem_table.delete(*self.mem_table.get_children())
+        f = self.mem_fit
+        if f is None:
+            ax = fig.add_subplot(111)
+            ax.axis("off")
+            ax.text(0.5, 0.5, "Maximum-entropy depth profile of the apparent concentrations (Scorciapino, Navarra, Elsener and "
+                              "Rossi).\nGive each species a material (for G-1) and a start model, then press Run MEM. The "
+                              "start model is the\nentropy prior: the profile departs from it only as far as the data demand, "
+                              "and a good start matters.", ha="center", va="center", color=MUTED, fontsize=11)
+            self.mem_canvas.draw_idle()
+            return
+        gs = fig.add_gridspec(2, 2, width_ratios=[3, 2])
+        ax1, ax2, ax3 = fig.add_subplot(gs[:, 0]), fig.add_subplot(gs[0, 1]), fig.add_subplot(gs[1, 1])
+        rdp = f.rdp()
+        for j, name in enumerate(f.names):
+            colour = PALETTE[j % len(PALETTE)]
+            ax1.plot(f.z_nm, 100 * f.n[:, j], "-", color=colour, lw=1.8, label=name)
+            ax1.plot(f.z_nm, 100 * f.prior[:, j], "--", color=colour, lw=0.8, alpha=0.6)
+            if self.mem_ens is not None and len(self.mem_ens[0]) == len(f.z_nm):
+                z, mean, sd = self.mem_ens
+                ax1.fill_between(z, 100 * (mean[:, j] - sd[:, j]), 100 * (mean[:, j] + sd[:, j]), color=colour, alpha=0.15, lw=0)
+            ax2.plot(f.angles, 100 * f.x_meas[j], "o", color=colour, ms=5)
+            ax2.plot(f.angles, 100 * f.x_calc[j], "--", color=colour, lw=1.2)
+            ax3.bar(j, rdp[j], color=colour)
+            lam0, lam1 = f.lam_ji[j, 0], f.lam_ji[j, -1]
+            self.mem_table.insert("", "end", values=(name, f"{f.curve_area_nm(j):.2f}", f"{f.peak_position_nm(j):.2f}",
+                                                     f"{lam0:.2f} → {lam1:.2f}", f"{rdp[j]:.2f}", ""))
+        shown = min(float(f.z_nm[-1]), max(8.0, 1.5 * float(max(f.interfaces(), default=(4.0,))[0]) + 3.0))
+        ax1.set_xlim(0, shown)
+        ax1.set_xlabel("Depth (nm)")
+        ax1.set_ylabel("Atomic fraction (%)")
+        ax1.set_title("MEM depth profile (solid) and start model (dashed)", fontsize=10)
+        ax1.set_ylim(0, 102)
+        ax1.grid(alpha=0.3)
+        ax1.legend(fontsize=8, loc="best")
+        ax2.set_xlabel("Emission angle θ (°)")
+        ax2.set_ylabel("Apparent conc. (%)")
+        ax2.set_title("Measured (points) and MEM (dashed)", fontsize=10)
+        ax2.grid(alpha=0.3)
+        ax3.set_xticks(range(len(f.names)))
+        ax3.set_xticklabels(f.names, rotation=30, ha="right", fontsize=7)
+        ax3.set_ylabel("X(high θ)/X(low θ)")
+        ax3.set_title("Relative depth (higher = nearer the surface)", fontsize=9)
+        ax3.grid(alpha=0.3, axis="y")
+        fig.subplots_adjust(left=0.07, right=0.98, top=0.92, bottom=0.2, wspace=0.28, hspace=0.75)
+        self.mem_canvas.draw_idle()
 
     # --- trend plot ---------------------------------------------------------------------------------------
     def _draw(self):

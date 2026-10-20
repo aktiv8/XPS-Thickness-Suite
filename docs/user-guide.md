@@ -370,6 +370,23 @@ whose thicknesses vary by 50 percent, which is how much the answer depends on wh
 position and width at half maximum; a note says when the minimiser did not converge, or when there are far more slabs than
 data (the profile is then set by the regularisation and the guess). Treat narrow features as unresolved.
 
+### ARXPS MEMS (Rossi)
+
+A maximum-entropy depth profile of the apparent concentrations of three or more species, after Scorciapino, Navarra, Elsener and Rossi
+[27]. Tick the species on the Depth profile tab and set their λ and sensitivity factors as for the other pages; this page adds a
+**material per species** (a preset, or a formula and density; *Guess materials* sets them from the names, so check them) and a **start
+model**: layers with a thickness and a composition in % (the last row is the bulk; the default is one species per layer in the order
+of the Stratification depths, and *Reset start model* rebuilds it). The start model is the entropy prior: the profile moves away
+from it only as far as the data demand, so make it as good as you can (the paper's whole protocol exists to find a good one).
+*Run MEM* runs the α schedule (default 100, 30, 10, 3, 1, 0.3, 0.1; it stops at the first α that fits within σ if *Stop at χ²/N ≤ 1* is
+ticked) and, with *Iterate IMFP*, recomputes the attenuation lengths from the composition of each cycle's profile. The plots show the
+profile with the start model dashed, the measured and calculated apparent concentrations, and the relative depth plot; the table lists
+each species' area, peak depth, the attenuation length it sees at the surface and deep down, and its relative depth, and the note
+the χ² per point of each cycle and the interfaces found. *Start-model ensemble* repeats the run from 8 starts with the thicknesses
+varied by ±30 % and shades the spread. G-1 attenuation lengths are for 200-2000 eV, and NIST cautions that they can be off by up to
+50 % for some materials: choose *own λ per species* to use the lengths on the species table instead. The paper tested the method on
+synthetic structures only; treat a profile from real data as one consistent with the measurements, not as the unique answer.
+
 ## The DAXPES tab
 
 Use this when a film may not cover the whole analysed area (islands, patterned oxide, a wafer with a partly grown layer) and

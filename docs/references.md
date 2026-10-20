@@ -89,8 +89,21 @@ only where they were checked against the paper itself or a bibliographic record.
     Interface Anal.* **44**, 1353-1359 (2012). DOI [10.1002/sia.5033](https://doi.org/10.1002/sia.5033). The attenuation-length
     starting values of the DAXPES tab (Eq. 11, "S3").
 
+27. M. A. Scorciapino, G. Navarra, B. Elsener and A. Rossi, Nondestructive surface depth profiles from angle-resolved X-ray
+    photoelectron spectroscopy data using the maximum entropy method. I. A new protocol, *J. Phys. Chem. C* **113**, 21328-21337
+    (2009). DOI [10.1021/jp906326m](https://doi.org/10.1021/jp906326m). The method of the ARXPS MEMS (Rossi) page.
+
+28. W. H. Gries, A universal predictive equation for the inelastic mean free pathlengths of X-ray photoelectrons and Auger
+    electrons, *Surf. Interface Anal.* **24**, 38-50 (1996).
+    DOI [10.1002/(SICI)1096-9918(199601)24:1<38::AID-SIA84>3.0.CO;2-H](https://doi.org/10.1002/(SICI)1096-9918(199601)24:1%3C38::AID-SIA84%3E3.0.CO;2-H).
+    The G-1 equation used for the attenuation lengths of the MEMS page.
+
+29. C. J. Powell and A. Jablonski, NIST Electron Inelastic-Mean-Free-Path Database, Standard Reference Database 71 (version 1.2),
+    user's guide, [nist.gov/document/srd71usersguidev1-2pdf](https://www.nist.gov/document/srd71usersguidev1-2pdf). Appendix A gives the G-1 equation (A.7-A.9) and the
+    caution that it can deviate by up to about 50 % for some materials.
+
 ## Citing
 
 If you use the Topofactor correction in published work, please cite the paper by Shard and co-workers [4] and the
 Thickogram paper by Cumpson [3]. For the Strohmeier calculator cite [1], and for the Cu presets [5]. For the
-angle-resolved analysis see [12] and [14]; for fits taken from CasaXPS see [17]; for the Profile (Murdoch) panel cite [20]; for the Relative depth page cite [22] and [23]; for the DAXPES tab cite [24] and, for its attenuation lengths, [26].
+angle-resolved analysis see [12] and [14]; for fits taken from CasaXPS see [17]; for the Profile (Murdoch) panel cite [20]; for the Relative depth page cite [22] and [23]; for the DAXPES tab cite [24] and, for its attenuation lengths, [26]; for the ARXPS MEMS (Rossi) page cite [27] and [28].

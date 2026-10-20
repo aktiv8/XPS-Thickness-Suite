@@ -659,6 +659,71 @@ reproduces its stored solution's chi-squared (0.0026 against 0.0023), and the cl
 top, a sulfur and tungsten layer about 1 nm thick, then oxygen and aluminium. Five angles cannot resolve a profile
 below about $\lambda\cos\theta_{max}$, so features narrower than that are the regulariser and the guess talking.
 
+### ARXPS MEMS (Rossi)
+
+The maximum-entropy method (MEM) of Scorciapino, Navarra, Elsener and Rossi [27] finds the depth profile that satisfies the
+angle-resolved data but contains the least structure: the entropy is the regulariser. It is built on the same model as the Profile
+(Murdoch) page, apparent concentrations with a closure over the species, but replaces the roughness penalty by an entropy and lets the
+attenuation lengths follow the composition. The sample is cut into layers of thickness $t$ (1 Å in the paper) at depths $z_i=i\,t$
+with the atomic fraction $n_{j,i}$ of species $j$ in layer $i$ and $\sum_j n_{j,i}=1$. The intensity of species $j$ at emission angle
+$\theta$ is $I_j=k_j\sum_i n_{j,i}\,e^{-z_i/(\lambda_{j,i}\cos\theta)}$, and that of the pure species $I_j^{\infty}=k_j\sum_i
+e^{-z_i/(\lambda_{j,i}\cos\theta)}$, so the apparent concentration, which is what the sensitivity-corrected intensities give, is
+
+```math
+X_j(\theta)=\frac{I_j/I_j^{\infty}}{\sum_l I_l/I_l^{\infty}}
+```
+
+independent of the $k_j$ and of any factor common to all peaks. With $m_{j,i}$ the initial estimate of the profile the entropy,
+the misfit and the probability function that is maximised are
+
+```math
+S=\sum_{j,i}\left[n_{j,i}-m_{j,i}-n_{j,i}\ln\frac{n_{j,i}}{m_{j,i}}\right],\qquad
+C=\chi^2=\sum_{j,k}\frac{\left(X^{calc}_{j,k}-X^{obs}_{j,k}\right)^2}{\sigma_{j,k}^2},\qquad Q=\alpha S-\frac{C}{2}
+```
+
+$S$ is zero at $n=m$ and negative elsewhere, so a large $\alpha$ keeps the profile at the start model (and does not fit the data), while
+a small $\alpha$ fits the data, noise included. The paper lets $\alpha$ fall from 100 towards 1 over successive calculation cycles
+(0.1 only for simple structures), each started from the previous solution. Here $Q$ is maximised by minimising $C/2-\alpha S$ over
+softmax variables, so that every layer sums to 1 and no fraction is negative, with an analytic gradient and the L-BFGS minimiser of the
+Murdoch page; the cycles stop at the first (largest) $\alpha$ whose $\chi^2$ per point is within the noise if *Stop at χ²/N ≤ 1* is ticked.
+$\sigma$ is a relative error of every apparent concentration (6 % is about the standard deviation of the paper's ±10 % uniform error).
+
+**Attenuation lengths that follow the composition.** The IMFP of the electrons of species $j$ in layer $i$ is the thickness-weighted mean
+of their IMFPs in all the materials they cross (the paper's Eqs. 4-7), so $\lambda_{j,i}=\frac{1}{i+1}\sum_{l=0}^{i}\sum_m n_{m,l}\,\Lambda_{j,m}$,
+with $\Lambda_{j,m}$ the IMFP of species $j$'s electrons in the material of species $m$. It depends on the profile, so it is recomputed
+from each cycle's solution until no length changes by more than 1 %. In a synthetic test this matters: with lengths that follow the
+composition, a fit that keeps them fixed misplaces a 1.6 nm overlayer by 9 % and its composition by 19 percentage points, while the
+iteration recovers both to within 3 % and 0.4 percentage points. $\Lambda_{j,m}$ comes from the **G-1 equation** of Gries [28], which
+the paper uses through NIST SRD 71 [29]:
+
+```math
+\lambda_{G1}\,[\mathrm{nm}]=k_1\,\frac{V_a}{Z^*}\,\frac{E}{\lg E-k_2},\quad V_a=\frac{\sum_i q_iM_i}{\rho\sum_i q_i},\quad
+Z^*=\frac{\sum_i q_i\sqrt{Z_i}}{\sum_i q_i}
+```
+
+for a material of formula $\mathrm{A}_{q_1}\mathrm{B}_{q_2}\dots$, density $\rho$ (g cm$^{-3}$) and an electron of kinetic energy $E$ (eV); $(k_1,k_2)$ is
+(0.0020, 1.30) for the 3d elements Ti-Cu, (0.0019, 1.35) for 4d Zr-Ag, (0.0019, 1.45) for 5d Hf-Au, (0.0014, 1.10) for the other
+elements, (0.0018, 1.00) for organic and (0.0019, 1.30) for inorganic compounds. The tab asks for a formula and a density per
+species (presets for common materials, or type them) and reproduces the G-1 values of Gries' Table 3 for water. G-1 was fitted to
+200-2000 eV (the tab says when an energy lies outside), and NIST cautions that it can deviate by up to about 50 % for some materials
+and that TPP-2M is generally preferred; the alternative on the page uses each species' own $\lambda$ from the species table scaled
+to the electron energy as $E^{0.75}$.
+
+**The starting profile is the prior.** The paper stresses that the reconstruction is only as good as the starting profile (the
+version of its algorithm with free layers failed from a flat start on structures with seven or eight components). Its protocol
+finds the start model with a simulator and refines it with a four-parameter pseudo-Gaussian version of the algorithm before
+the free-layer version used here; this page implements the free-layer version only, with the start model entered as a table of
+layers (thickness and composition in %, the last row being the bulk, by default one species per layer in the order of the
+Stratification depths) and used as the entropy prior $m$. Layers below the *Free to* depth are held at the bulk composition,
+as in the paper's constrained bulk. On the paper's synthetic structures (7 angles from 0 to 60 degrees, which the text does not
+give; the IMFPs, layers and compositions are those of its Table 1) with start models whose layer thicknesses are 10 % off, the
+overlayer thickness is recovered to within 12 % and the compositions of the upper layers to within 16 percentage points,
+with or without ±10 % random error, as the paper reports (thickness ±10-20 %, composition ±10-30 %); a 0.6 nm pure layer between
+two thicker ones is at the limit of what the fit resolves. From a start 30 % off the interfaces follow the start model rather than
+the data, which the start-model ensemble (mean and spread over 8 starts) makes visible. The page also draws the paper's relative
+depth plot, the ratio of the model's apparent concentration at the largest angle to that at the smallest, and reports each species'
+curve area (nm of that species), peak depth and the interfaces where the dominant species changes.
+
 ### Attenuation lengths and the range of validity
 
 Every method here depends on the attenuation lengths. The starting values are TPP-2M inelastic mean free paths for an

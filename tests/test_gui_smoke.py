@@ -716,6 +716,55 @@ class DepthTabSmoke(unittest.TestCase):
         self.assertNotEqual(ratio, published)
         self.assertTrue(ratio[0] > ratio[1] > ratio[2])
 
+    def test_the_mem_page_exists_runs_and_fills_the_plots_and_the_table(self):
+        import numpy as np
+        app, tab = self._stack()
+        titles = [tab.plot_nb.tab(i, "text") for i in range(tab.plot_nb.index("end"))]
+        self.assertIn("ARXPS MEMS (Rossi)", titles)
+        self.assertEqual([m["preset"].get() for m in tab.mem_mats], ["Hydrocarbon (CH2)", "SiO2", "Al"])   # guessed from names
+        self.assertEqual(tab.mem_active, ["C 1s", "O 1s", "Al 2p"])
+        self.assertEqual(len(tab.mem_layer_rows), 3)
+        self.assertEqual([[v.get() for v in r["comps"]] for r in tab.mem_layer_rows],
+                         [["100", "0", "0"], ["0", "100", "0"], ["0", "0", "100"]])        # Stratification order, one each
+        tab.mem_rel.set("5")
+        tab._mem_run()
+        f = tab.mem_fit
+        self.assertIsNotNone(f)
+        self.assertTrue(np.allclose(f.n.sum(axis=1), 1.0))
+        self.assertIn("Cycles:", tab.mem_note.get())
+        rows = [tab.mem_table.item(i, "values") for i in tab.mem_table.get_children()]
+        self.assertEqual([r[0] for r in rows], ["C 1s", "O 1s", "Al 2p"])
+        self.assertGreater(float(rows[0][4]), float(rows[2][4]))                        # carbon is nearer the surface than Al
+        self.assertEqual(len(tab.mem_fig.axes), 3)
+        depths = [d for d, _, _ in f.interfaces()]
+        self.assertTrue(0.5 < depths[0] < 1.5 and 1.8 < depths[1] < 3.0, depths)        # layers of 0.8 and 1.5 nm
+
+    def test_the_mem_page_options_and_errors(self):
+        import depth_tab as DTM
+        app, tab = self._stack()
+        tab.mem_rel.set("5")
+        tab.mem_model.set(DTM.MEM_IMFP_OWN)
+        tab.mem_iter.set(False)
+        tab._mem_run()
+        self.assertFalse(any(c["imfp_iterations"] > 1 for c in tab.mem_fit.cycles))
+        tab._mem_ensemble()
+        self.assertIn("Mean and spread", tab.mem_note.get())
+        self.assertIsNotNone(tab.mem_ens)
+        tab.mem_alphas.set("-1")
+        tab._mem_run()
+        self.assertIn("positive", tab.mem_note.get())
+        tab.mem_alphas.set("10, 1")
+        tab.rows[0]["use"].set(False)                                                    # two species are too few
+        tab._mem_use_changed()
+        tab._mem_run()
+        self.assertIn("at least three species", tab.mem_note.get())
+        tab.rows[0]["use"].set(True)
+        tab._mem_use_changed()
+        tab.mem_mats[1]["density"].set("0")
+        tab.mem_model.set(DTM.MEM_IMFP_G1)
+        tab._mem_run()
+        self.assertIn("positive density", tab.mem_note.get())
+
     def test_the_three_point_method_gives_profiles_without_an_alpha(self):
         app, tab = self._stack()
         tab.prof_method.set(DT.METHOD_3PT)
