@@ -54,9 +54,10 @@ class ARXPSTab(ttk.Frame):
         self.state_label = {}               # (section, state key) -> state name
         self.fit_note = ""                  # which states were used, for the details box
         keys = ("fit_region", "fit_region_ov", "region", "region_sub", "region_ov", "angle_src", "azim_src", "view_az", "offset", "max_angle", "lam",
-                "rinf", "so", "ss", "eo", "es", "hv", "env_lo", "env_hi", "split", "s_lo", "s_hi", "o_lo", "o_hi")
+                "rinf", "coverage", "so", "ss", "eo", "es", "hv", "env_lo", "env_hi", "split", "s_lo", "s_hi", "o_lo", "o_hi")
         self.v = {k: tk.StringVar() for k in keys}
         self.v["offset"].set("0")
+        self.v["coverage"].set("1")
         self.v["max_angle"].set(f"{AR.DEFAULT_MAX_ANGLE:g}")
         self.v["so"].set("1")
         self.v["ss"].set("1")
@@ -190,6 +191,12 @@ class ARXPSTab(ttk.Frame):
                     "it (e.g. from a reference sample).", width=9)
         ttk.Label(self.states_frame, text="from the presets, or type it", style="CardMuted.TLabel").grid(
             row=0, column=2, sticky="w")
+        self._entry(self.states_frame, "coverage", 1, "Coverage f:", "Fraction of the surface the overlayer covers "
+                    "(Sodhi 2017, Eq. 2). 1 = a complete, uniform layer (the usual model). Below 1 the rest is bare "
+                    "substrate. Type 'fit' to choose f so that the thickness no longer changes with angle (needs three "
+                    "or more angles). Assumes the same attenuation length for both states.", width=9)
+        ttk.Label(self.states_frame, text="1 = complete layer; 'fit' finds it", style="CardMuted.TLabel").grid(
+            row=1, column=2, sticky="w")
 
         self.peaks_frame = ttk.Frame(f, style="Card.TFrame")
         self.peaks_frame.grid(row=4, column=0, columnspan=4, sticky="w")
@@ -595,6 +602,16 @@ class ARXPSTab(ttk.Frame):
             raise ValueError(f"'{label}' must be greater than zero.")
         return x
 
+    def _coverage(self):
+        """The overlayer coverage f from its box: a number in (0, 1], or None for 'fit'."""
+        text = self.v["coverage"].get().strip().lower()
+        if text in ("fit", "auto"):
+            return None
+        f = _to_float(text) if text else 1.0
+        if f is None or not (0.0 < f <= 1.0):
+            raise ValueError("'Coverage f' must be a number above 0 and at most 1, or 'fit'.")
+        return f
+
     def calculate(self):
         try:
             self._calculate()
@@ -628,7 +645,8 @@ class ARXPSTab(ttk.Frame):
             first = self._reference_series(region)[0][1]          # every azimuth is aligned to this spectrum
             reference = (first.be_ev, AR.intensity(first, ps, tr))
             for az, rows in series.items():
-                results[az] = AR.analyse_two_states(rows, w, lam, rinf, offset, max_angle, ps, tr, reference=reference)
+                results[az] = AR.analyse_two_states(rows, w, lam, rinf, offset, max_angle, ps, tr, reference=reference,
+                                                    coverage=self._coverage())
         else:
             reg_s, reg_o = self.v["region_sub"].get(), self.v["region_ov"].get()
             if reg_s == reg_o:
@@ -682,7 +700,8 @@ class ARXPSTab(ttk.Frame):
             fit_region = self._fit_region_name(region, "fit_region")[0]
             roles = self._roles("main")
             for az, rows in series.items():
-                results[az] = AR.analyse_fitted_states(rows, roles, lam, rinf, offset, max_angle, tr, region=fit_region)
+                results[az] = AR.analyse_fitted_states(rows, roles, lam, rinf, offset, max_angle, tr, region=fit_region,
+                                                       coverage=self._coverage())
         else:
             reg_s, reg_o = self.v["region_sub"].get(), self.v["region_ov"].get()
             if reg_s == reg_o:
@@ -755,6 +774,12 @@ class ARXPSTab(ttk.Frame):
                                  f"d = {r.d_rinf_free_nm:.3f} nm")
             if r.rinf is not None:
                 lines.append(f"  R∞ used = {r.rinf:.4g}")
+            if r.coverage_fit is not None:
+                lines.append(f"  coverage f = {r.coverage:.2f} (fitted: scatter of d between angles "
+                             f"{100 * r.coverage_fit['cv']:.1f} % against {100 * r.coverage_fit['cv1']:.1f} % for a "
+                             "complete layer)")
+            elif r.coverage != 1.0:
+                lines.append(f"  coverage f = {r.coverage:g}: the overlayer covers that fraction of the surface")
             if r.b is not None:
                 lines.append(f"  B = KEo/KEs = {r.b:.4g}")
         lines += ["", self.fit_note or "Angles from the surface normal; windows follow the peak at each angle "

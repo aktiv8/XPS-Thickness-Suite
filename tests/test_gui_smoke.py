@@ -332,6 +332,21 @@ class ARXPSTabSmoke(unittest.TestCase):
         self.assertEqual(len(tab.figs["fit"][0].axes), 1)
         self.assertGreater(len(tab.figs["spectra"][0].axes[0].lines), 6)
 
+    def test_the_coverage_box_gives_a_thicker_layer_and_fit_is_understood(self):
+        app, tab = self._states_tab(S.two_state_series(d_nm=1.5))
+        tab.auto_windows()
+        tab.v["max_angle"].set("80")
+        tab.calculate()
+        full = tab.results[None].d_nm
+        tab.v["coverage"].set("0.9")
+        tab.calculate()
+        self.assertGreater(tab.results[None].d_nm, full)
+        self.assertIn("coverage f = 0.9", tab.details.get("1.0", "end"))
+        tab.v["coverage"].set("fit")
+        tab.calculate()
+        self.assertIsNotNone(tab.results[None].coverage_fit)
+        self.assertIn("fitted", tab.details.get("1.0", "end"))
+
     def test_high_angles_are_excluded_and_say_so(self):
         app, tab = self._states_tab(S.two_state_series())
         tab.calculate()                               # windows are found automatically when blank

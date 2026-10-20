@@ -441,6 +441,8 @@ class ARXPSResult:
     d_se_nm: Optional[float] = None
     line: Optional[Tuple[float, float, float, float]] = None      # free-intercept fit (c, k, se_c, se_k)
     rinf_free: Optional[dict] = None
+    coverage: float = 1.0                     # fraction of the surface the overlayer covers (mode 1)
+    coverage_fit: Optional[dict] = None       # set when the coverage was fitted rather than given
     azimuth: Optional[float] = None
     warnings: List[str] = field(default_factory=list)
 
@@ -467,15 +469,95 @@ class ARXPSResult:
         return self.rinf_free["k"] * self.lam_nm if self.rinf_free else None
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# Partial coverage (uniformity factor f)
+# ---------------------------------------------------------------------------------------------------------------
+#
+# R. N. S. Sodhi et al., Surf. Interface Anal. 49, 1309 (2017), Eq. 2 (after Flinn and McIntyre, McKeown et al.): if the
+# overlayer, thickness d, covers only a fraction f of the surface and the rest is bare substrate, the overlayer/substrate
+# ratio with equal attenuation lengths and x = d / (lambda cos theta) is
+#
+#     R = R_inf f (1 - e^-x) / ((1 - f) + f e^-x)       ->       e^-x = (R_inf f - R (1 - f)) / (f (R + R_inf))
+#
+# which is the ordinary ln(1 + R / R_inf) at f = 1. x is still proportional to 1 / cos theta, so the through-origin fit is
+# unchanged. R cannot exceed R_inf f / (1 - f) however thick the patches are. f is usually unknown; McKeown et al. varied it
+# until the thickness no longer changed with angle, which `fit_coverage` does by minimising that scatter.
+
+COVERAGE_MIN = 0.05
+
+
+def coverage_x(ratio: float, rinf: float, f: float = 1.0) -> float:
+    """x = d / (lambda cos theta) for one angle from R = I_ov / I_sub and the overlayer coverage f (0 < f <= 1)."""
+    if not 0.0 < f <= 1.0:
+        raise ValueError("The coverage f must be greater than 0 and at most 1.")
+    if f == 1.0:
+        return math.log1p(ratio / rinf)
+    e = (rinf * f - ratio * (1.0 - f)) / (f * (ratio + rinf))
+    if not 0.0 < e <= 1.0:
+        raise ValueError(f"R = {ratio:.3g} is above the limit R∞ f/(1-f) = {rinf * f / (1.0 - f):.3g} for coverage f = {f:g}.")
+    return -math.log(e)
+
+
+def fit_coverage(u: Sequence[float], r: Sequence[float], rinf: float) -> Optional[dict]:
+    """
+    The coverage f (COVERAGE_MIN to 1) that makes x / u, hence the thickness, as constant as possible over the angles: the
+    relative scatter (std / mean) of x_i / u_i is minimised on a grid. Needs 3 or more positive ratios. Returns None when
+    there are too few, else {"f", "cv" (scatter at the best f), "cv1" (scatter at f = 1), "edge"}. `edge` is True when f is
+    at the lower limit or f = 1 fits as well (within 0.005), i.e. the angles cannot tell the coverage.
+    """
+    u, r = np.asarray(u, dtype=float), np.asarray(r, dtype=float)
+    if len(u) < 3 or np.any(r <= 0):
+        return None
+
+    def scatter(f):
+        try:
+            x = np.array([coverage_x(float(v), rinf, f) for v in r]) / u
+        except ValueError:
+            return math.inf
+        m = float(np.mean(x))
+        return float(np.std(x)) / m if m > 0 else math.inf
+
+    grid = np.linspace(COVERAGE_MIN, 1.0, 191)
+    cvs = [scatter(float(f)) for f in grid]
+    j = int(np.argmin(cvs))
+    cv1 = cvs[-1]
+    return {"f": float(grid[j]), "cv": cvs[j], "cv1": cv1, "edge": bool(j == 0 or cv1 - cvs[j] < 0.005)}
+
+
+def _coverage_solver(rows: List[AngleRow], rinf: float, coverage: Optional[float], max_angle: float):
+    """(solve_x, f used, fit info or None): `coverage` None means fit it to the angles that will be used."""
+    info = None
+    if coverage is None:
+        use = [r for r in rows if r.ratio is not None and r.ratio > 0 and 0.0 <= r.angle_deg <= max_angle]
+        info = fit_coverage([r.u for r in use], [r.ratio for r in use], rinf)
+        if info is None:
+            raise ValueError("Fitting the coverage f needs three or more angles with positive areas.")
+        coverage = info["f"]
+    if not (math.isfinite(coverage) and 0.0 < coverage <= 1.0):
+        raise ValueError("The coverage f must be greater than 0 and at most 1.")
+    return (lambda r: coverage_x(r, rinf, coverage)), float(coverage), info
+
+
+def _note_coverage(res: ARXPSResult, info: Optional[dict]) -> None:
+    """Record a fitted coverage on the result, with a warning when the angles cannot determine it."""
+    if info is None:
+        return
+    res.coverage_fit = info
+    if info["edge"]:
+        res.warnings.append(f"The coverage f = {info['f']:.2f} is not well determined: a complete layer (f = 1) fits the "
+                            "angles almost as well, or f sits on its lower limit.")
+
+
 def fit_series(rows: List[AngleRow], lam_nm: float, solve_x: Callable[[float], float], max_angle: float,
-               mode: int, rinf: Optional[float] = None, b: Optional[float] = None) -> ARXPSResult:
+               mode: int, rinf: Optional[float] = None, b: Optional[float] = None, coverage: float = 1.0
+               ) -> ARXPSResult:
     """
     From rows with areas and ratios to the thickness: per-angle x, the through-origin fit of x against 1/cos(theta),
     the free-intercept check and (mode 1) the Rinf-free fit. `solve_x` turns one ratio into x or raises ValueError.
     """
     if not math.isfinite(lam_nm) or lam_nm <= 0:
         raise ValueError("Lambda (attenuation length) must be a positive number of nm.")
-    res = ARXPSResult(mode=mode, lam_nm=lam_nm, rows=rows, rinf=rinf, b=b)
+    res = ARXPSResult(mode=mode, lam_nm=lam_nm, rows=rows, rinf=rinf, b=b, coverage=coverage)
     for r in rows:
         if not (0.0 <= r.angle_deg < 90.0):
             r.note = "angle outside 0-90 degrees"
@@ -509,7 +591,7 @@ def fit_series(rows: List[AngleRow], lam_nm: float, solve_x: Callable[[float], f
     res.d_nm = res.k * lam_nm
     res.d_se_nm = res.k_se * lam_nm if res.k_se is not None else None
     res.line = fit_line(u, xs)
-    if mode == 1:
+    if mode == 1 and coverage == 1.0:                  # the R-inf-free model assumes a complete layer
         res.rinf_free = fit_rinf_free(u, [r.ratio for r in used])
 
     skipped = [r for r in rows if not r.used and r.note and "limit" not in r.note]
@@ -543,11 +625,13 @@ def _emission(tilt: float, offset: float) -> float:
 
 def analyse_two_states(series: Sequence[Tuple[float, object]], windows: TwoStateWindows, lam_nm: float, rinf: float,
                        angle_offset: float = 0.0, max_angle: float = DEFAULT_MAX_ANGLE, per_second: bool = True,
-                       transmission: bool = True, align: bool = True, reference=None) -> ARXPSResult:
+                       transmission: bool = True, align: bool = True, reference=None,
+                       coverage: Optional[float] = 1.0) -> ARXPSResult:
     """
     Mode 1: substrate and overlayer states in one core-level region (series = [(tilt, Block), ...], lowest angle first).
     rinf = (RSF N lambda)_overlayer / (RSF N lambda)_substrate, built exactly as the Calculator tab does.
     `reference` is the (be, intensity) the windows were set on (default: the first spectrum of the series).
+    `coverage` is the fraction of the surface the overlayer covers (1 = a complete layer; None fits it, see fit_coverage).
     """
     if not (math.isfinite(rinf) and rinf > 0):
         raise ValueError("Rinf must be a positive number.")
@@ -562,7 +646,9 @@ def analyse_two_states(series: Sequence[Tuple[float, object]], windows: TwoState
         ratio = ex.area_ov / ex.area_sub if ex.area_sub > 0 else None
         rows.append(AngleRow(_emission(tilt, angle_offset), tilt, ex.area_sub, ex.area_ov, ratio,
                              shift_ev=ex.shift_ev, sub=ex, ov=ex))
-    res = fit_series(rows, lam_nm, lambda r: math.log1p(r / rinf), max_angle, mode=1, rinf=rinf)
+    solve_x, f_used, f_info = _coverage_solver(rows, rinf, coverage, max_angle)
+    res = fit_series(rows, lam_nm, solve_x, max_angle, mode=1, rinf=rinf, coverage=f_used)
+    _note_coverage(res, f_info)
     probe = next((r.sub for r in rows if r.used), rows[0].sub)
     if probe.peak_sub is not None and probe.peak_ov is not None:
         if probe.peak_ov - probe.peak_sub < MIN_STATE_SEPARATION_EV or probe.peak_ov - windows.split < 0.15:
@@ -722,7 +808,8 @@ def _check_roles(fits, roles, want: Sequence[str]) -> None:
 
 def analyse_fitted_states(series, roles: Dict[str, str], lam_nm: float, rinf: float, angle_offset: float = 0.0,
                           max_angle: float = DEFAULT_MAX_ANGLE, transmission: bool = True,
-                          region: Optional[str] = None, fits: Optional[List[FitAngle]] = None) -> ARXPSResult:
+                          region: Optional[str] = None, fits: Optional[List[FitAngle]] = None,
+                          coverage: Optional[float] = 1.0) -> ARXPSResult:
     """
     Mode 1 from stored fits: the substrate and overlayer states are sums of the assigned states of one fitted region
     (series = [(tilt, Block), ...], lowest angle first); everything after the areas is shared with the window method.
@@ -742,7 +829,10 @@ def analyse_fitted_states(series, roles: Dict[str, str], lam_nm: float, rinf: fl
         ratio = o_area / s_area if s_area > 0 else None
         rows.append(AngleRow(_emission(f.tilt, angle_offset), f.tilt, s_area, o_area, ratio, shift_ev=shift,
                              fit_sub=view, fit_ov=view))
-    return fit_series(rows, lam_nm, lambda r: math.log1p(r / rinf), max_angle, mode=1, rinf=rinf)
+    solve_x, f_used, f_info = _coverage_solver(rows, rinf, coverage, max_angle)
+    res = fit_series(rows, lam_nm, solve_x, max_angle, mode=1, rinf=rinf, coverage=f_used)
+    _note_coverage(res, f_info)
+    return res
 
 
 def analyse_fitted_peaks(sub_series, ov_series, sub_roles: Dict[str, str], ov_roles: Dict[str, str], so: float,

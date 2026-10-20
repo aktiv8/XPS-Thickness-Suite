@@ -371,5 +371,80 @@ class Azimuths(unittest.TestCase):
         self.assertIsNone(AR.summarise_azimuths(res)[1])
 
 
+class Coverage(unittest.TestCase):
+    """Partial coverage f (Sodhi 2017, Eq. 2) in the two-states mode."""
+    RINF, LAM, D = 0.6, 3.0, 2.0
+    TILTS = [0.0, 30.0, 45.0, 60.0, 70.0]
+
+    def _rows(self, f, d=None):
+        rows = []
+        for t in self.TILTS:
+            x = (d or self.D) / (self.LAM * math.cos(math.radians(t)))
+            e = math.exp(-x)
+            r = self.RINF * f * (1 - e) / ((1 - f) + f * e)
+            rows.append(AR.AngleRow(t, t, 100.0, 100.0 * r, r))
+        return rows
+
+    def test_f_equal_to_one_is_the_ordinary_logarithm(self):
+        for r in (0.05, 0.4, 3.0):
+            self.assertEqual(AR.coverage_x(r, 0.55, 1.0), math.log1p(r / 0.55))
+
+    def test_the_forward_model_and_its_inverse_agree(self):
+        for f in (0.3, 0.7, 0.95):
+            for x in (0.1, 0.8, 2.5):
+                e = math.exp(-x)
+                r = 0.55 * f * (1 - e) / ((1 - f) + f * e)
+                self.assertAlmostEqual(AR.coverage_x(r, 0.55, f), x, places=10)
+
+    def test_a_ratio_above_the_limit_for_that_coverage_is_refused(self):
+        limit = 0.55 * 0.5 / 0.5
+        with self.assertRaises(ValueError):
+            AR.coverage_x(limit * 1.01, 0.55, 0.5)
+        with self.assertRaises(ValueError):
+            AR.coverage_x(0.3, 0.55, 0.0)
+
+    def test_a_given_coverage_recovers_the_thickness_a_complete_layer_would_underestimate(self):
+        rows = self._rows(0.7)
+        solve, f, info = AR._coverage_solver(rows, self.RINF, 0.7, 70.0)
+        res = AR.fit_series(rows, self.LAM, solve, 70.0, 1, rinf=self.RINF, coverage=f)
+        self.assertAlmostEqual(res.d_nm, self.D, places=9)
+        self.assertIsNone(res.rinf_free)                      # that fit assumes a complete layer
+        full = AR.fit_series(self._rows(0.7), self.LAM, lambda r: math.log1p(r / self.RINF), 70.0, 1, rinf=self.RINF)
+        self.assertLess(full.d_nm, 0.7 * self.D)
+
+    def test_fitting_the_coverage_finds_it_and_the_thickness(self):
+        for f in (0.5, 0.8):
+            rows = self._rows(f)
+            solve, fu, info = AR._coverage_solver(rows, self.RINF, None, 70.0)
+            self.assertAlmostEqual(fu, f, delta=0.006)
+            self.assertFalse(info["edge"])
+            self.assertLess(info["cv"], 0.01)
+            self.assertGreater(info["cv1"], 0.05)
+            res = AR.fit_series(rows, self.LAM, solve, 70.0, 1, rinf=self.RINF, coverage=fu)
+            self.assertAlmostEqual(res.d_nm, self.D, delta=0.02)
+
+    def test_a_complete_layer_is_not_mistaken_for_patchy_and_the_fit_says_it_is_undetermined(self):
+        rows = self._rows(1.0)
+        solve, fu, info = AR._coverage_solver(rows, self.RINF, None, 70.0)
+        self.assertEqual(fu, 1.0)
+        self.assertTrue(info["edge"])
+        res = AR.fit_series(rows, self.LAM, solve, 70.0, 1, rinf=self.RINF, coverage=fu)
+        AR._note_coverage(res, info)
+        self.assertTrue(any("not well determined" in w for w in res.warnings))
+
+    def test_fitting_needs_three_angles(self):
+        with self.assertRaises(ValueError):
+            AR._coverage_solver(self._rows(0.7)[:2], self.RINF, None, 70.0)
+
+    def test_the_window_method_accepts_a_coverage_and_the_default_is_unchanged(self):
+        ser = _series(S.two_state_series(d_nm=1.5))
+        base = AR.analyse_two_states(ser, _auto(ser), LAM, RINF, max_angle=80)
+        same = AR.analyse_two_states(ser, _auto(ser), LAM, RINF, max_angle=80, coverage=1.0)
+        self.assertEqual(base.d_nm, same.d_nm)
+        self.assertEqual(base.coverage, 1.0)
+        patchy = AR.analyse_two_states(ser, _auto(ser), LAM, RINF, max_angle=80, coverage=0.9)
+        self.assertGreater(patchy.d_nm, base.d_nm)             # less cover for the same ratio means thicker patches
+
+
 if __name__ == "__main__":
     unittest.main()

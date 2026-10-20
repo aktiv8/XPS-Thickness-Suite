@@ -275,6 +275,26 @@ Two cross-checks are shown with it:
   $R_\infty$. It shows how much the answer depends on the densities, IMFPs and sensitivity factors in the presets.
   When $R$ is almost proportional to $1/\cos\theta$ the data cannot separate the two parameters, and the tab says so.
 
+### Partial coverage (two states of one peak)
+
+The equations above assume a complete, uniform layer. If the overlayer covers only a fraction $f$ of the surface and the rest
+is bare substrate, the ratio for equal attenuation lengths becomes [23] (after Flinn and McIntyre and McKeown and co-workers)
+
+```math
+R = R_\infty\,\frac{f\left(1-e^{-x}\right)}{(1-f)+f\,e^{-x}}\quad\Longleftrightarrow\quad
+e^{-x} = \frac{R_\infty f - R(1-f)}{f\,(R + R_\infty)},\qquad x = \frac{d}{\lambda\cos\theta}
+```
+
+which reduces to $\ln(1+R/R_\infty)$ at $f=1$. Because $x$ is still proportional to $1/\cos\theta$, the through-origin fit and
+its error are unchanged; only the conversion from $R$ to $x$ differs. However thick the patches, $R$ cannot exceed
+$R_\infty f/(1-f)$, and a larger ratio is refused for that coverage. Treating a patchy layer as complete gives a thickness
+that is too small (for $f=0.7$ the example in the tests returns 1.04 nm for a true 2.0 nm) and a line that does not pass through the
+origin. $f$ is usually not known; McKeown and co-workers varied it until the thickness no longer changed with angle, and the
+*Coverage f* box does the same when it is set to `fit`: it chooses the $f$ (0.05 to 1) that minimises the relative scatter of
+$x_i/u_i$ and reports that scatter next to the one for a complete layer. With few angles, or data that a complete layer
+already fits, $f$ is poorly determined and the tab warns. The $R_\infty$-free fit assumes a complete layer, so it is left out when
+$f \ne 1$, and the model applies only to two states of one peak (equal attenuation length), not to the two-peaks mode.
+
 ### Peak areas
 
 By default the areas come from the spectra themselves, with no fitting of line shapes. (The alternative, using a

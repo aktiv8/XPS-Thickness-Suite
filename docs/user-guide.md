@@ -266,6 +266,10 @@ and *SiO2*: the tab selects the fitted components, makes Si El the substrate and
   *R-infinity-free* line in the details shows what the data alone prefer.
 - Real data often show an intercept above zero: contamination, roughness and elastic scattering all bend the line. The
   badge says when it is more than the scatter allows.
+- **Coverage f** (two states of one peak): leave it at 1 for a complete layer. If the overlayer is patchy (islands, a
+  partly covered wafer) enter the fraction of the surface it covers, or type `fit` to let the angles choose it. A complete layer
+  assumed for a patchy one gives a thickness that is too small. The details box shows the fitted $f$ and warns when the angles
+  cannot determine it; it does not apply to the two-peaks mode.
 
 ## The Depth profile tab
 
