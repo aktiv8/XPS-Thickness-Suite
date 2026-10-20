@@ -1375,7 +1375,7 @@ class DepthTab(ttk.Frame):
             Tooltip(e, tip)
         bar2 = ttk.Frame(page, style="Card.TFrame")
         bar2.pack(side="top", fill="x", pady=(3, 0))
-        cb = ttk.Combobox(bar2, textvariable=self.mem_model, values=[MEM_IMFP_G1, MEM_IMFP_OWN], state="readonly", width=32)
+        cb = ttk.Combobox(bar2, textvariable=self.mem_model, values=[MEM_IMFP_G1, MEM_IMFP_OWN], state="readonly", width=44)
         cb.pack(side="left", padx=(0, 6))
         Tooltip(cb, "How the electron IMFP in each material is obtained. G-1 (Gries 1996, as in the paper) needs a formula and a "
                     "density per species and the kinetic energy of its electrons; NIST cautions it can be off by up to 50 % for "
@@ -1388,6 +1388,8 @@ class DepthTab(ttk.Frame):
             ck = ttk.Checkbutton(bar2, text=text, variable=var, style="Card.TCheckbutton")
             ck.pack(side="left", padx=(0, 6))
             Tooltip(ck, tip)
+        bar3 = ttk.Frame(page, style="Card.TFrame")
+        bar3.pack(side="top", fill="x", pady=(3, 0))
         for text, cmd, tip in (("Run MEM", self._mem_run, "Maximise Q = αS - C/2 from the start model below."),
                                ("Auto start", self._mem_auto_start, "The paper's simulator, automated: search the layer "
                                 "thicknesses and compositions (for the number of layers set below) whose apparent concentrations "
@@ -1399,7 +1401,7 @@ class DepthTab(ttk.Frame):
                                ("Reset start model", self._mem_reset_start, "Rebuild the start model from the Stratification "
                                 "depth order, one species per layer."),
                                ("Guess materials", self._mem_guess_materials, "Set each species' material from its name.")):
-            b = ttk.Button(bar2, text=text, command=cmd)
+            b = ttk.Button(bar3, text=text, command=cmd)
             b.pack(side="left", padx=(0, 4))
             Tooltip(b, tip)
         ttk.Label(page, textvariable=self.mem_note, style="CardMuted.TLabel", wraplength=900, justify="left").pack(
