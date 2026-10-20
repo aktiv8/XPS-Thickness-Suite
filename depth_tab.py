@@ -45,6 +45,7 @@ GEO_NONE = "none (X-ray spot sets the area)"
 GEO_ANALYSER = "multiply by cos θ (analyser sets it)"
 RDP_PUBLISHED_LABEL = "ln I(high) / ln I(low)  (as published)"
 RDP_RATIO_LABEL = "ln [ I(high) / I(low) ]  (unit-free)"
+RDP_CONC_LABEL = "X(high) / X(low)  (Rossi, atomic share)"
 METHOD_TIKHONOV = "Tikhonov (smooth)"
 METHOD_3PT = "3-point (ARCtick)"
 GEO_FLUX = "divide by cos θ (empirical: tilted beam)"
@@ -552,13 +553,15 @@ class DepthTab(ttk.Frame):
         bar = ttk.Frame(page, style="Card.TFrame")
         bar.pack(side="top", fill="x")
         ttk.Label(bar, text="Formula:", style="Card.TLabel").pack(side="left")
-        cb = ttk.Combobox(bar, textvariable=self.rdp_mode, values=[RDP_PUBLISHED_LABEL, RDP_RATIO_LABEL],
-                          state="readonly", width=34)
+        cb = ttk.Combobox(bar, textvariable=self.rdp_mode, values=[RDP_PUBLISHED_LABEL, RDP_RATIO_LABEL, RDP_CONC_LABEL],
+                          state="readonly", width=38)
         cb.pack(side="left", padx=4)
         cb.bind("<<ComboboxSelected>>", lambda e: self._draw_rdp())
         Tooltip(cb, "as published (Brundle 2010, Sodhi 2017): the logarithm of each species' atomic % at the high angle "
                     "divided by that at the low angle; undefined for shares near or below 1 %. unit-free: the logarithm "
-                    "of the intensity ratio, which does not depend on units and gives the same order as Stratification.")
+                    "of the intensity ratio, which does not depend on units and gives the same order as Stratification. "
+                    "Rossi: the atomic share at the high angle over that at the low angle (Scorciapino et al. 2009), "
+                    "1 where a species does not change; no logarithm, so small shares are fine.")
         ttk.Label(bar, text="  Angles are those of the Stratification page.", style="CardMuted.TLabel").pack(side="left")
         lower = ttk.Frame(page, style="Card.TFrame")
         lower.pack(side="bottom", fill="x", pady=(6, 0))
@@ -591,7 +594,7 @@ class DepthTab(ttk.Frame):
             a, b = float(self.strat_a.get()), float(self.strat_b.get())
         except ValueError:
             max_angle, a, b = DP.DEFAULT_MAX_ANGLE, None, None
-        mode = DP.RDP_RATIO if self.rdp_mode.get() == RDP_RATIO_LABEL else DP.RDP_PUBLISHED
+        mode = {RDP_RATIO_LABEL: DP.RDP_RATIO, RDP_CONC_LABEL: DP.RDP_CONC}.get(self.rdp_mode.get(), DP.RDP_PUBLISHED)
         rows = DP.relative_depth(species, a, b, mode, max_angle)
         ax = fig.add_subplot(111)
         placed = sorted([(r.value, i) for i, r in enumerate(rows) if r.value is not None], reverse=True)

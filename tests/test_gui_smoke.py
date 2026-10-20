@@ -715,6 +715,11 @@ class DepthTabSmoke(unittest.TestCase):
         ratio = [float(tab.rdp_table.item(i, "values")[1]) for i in tab.rdp_table.get_children()]
         self.assertNotEqual(ratio, published)
         self.assertTrue(ratio[0] > ratio[1] > ratio[2])
+        tab.rdp_mode.set(DT.RDP_CONC_LABEL)
+        tab._draw_rdp()
+        conc = [float(tab.rdp_table.item(i, "values")[1]) for i in tab.rdp_table.get_children()]
+        self.assertTrue(conc[0] > conc[1] > conc[2])
+        self.assertGreater(conc[0], 1.0)
 
     def test_the_mem_page_exists_runs_and_fills_the_plots_and_the_table(self):
         import numpy as np

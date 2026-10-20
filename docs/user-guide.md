@@ -313,7 +313,8 @@ angles chosen on the Stratification page): the higher the dot, the nearer the su
 the layers is what you expect, before trusting a depth from Stratification or Layers. There is no depth scale here. The
 *Formula* box offers the definition from the literature (the logarithm of each species' atomic % at the high angle divided by
 that at the low angle, undefined for shares of about 1 % or less) and a unit-free form, the logarithm of the intensity ratio,
-which orders the species the same way as Stratification. The table adds the uncertainty, the atomic percentages and the
+which orders the species the same way as Stratification, and the ratio of the atomic share at the high angle to that at the low
+angle (the definition of the MEMS paper, 1 for a species that does not change with angle, no logarithm). The table adds the uncertainty, the atomic percentages and the
 curvature statistic; the note warns about a species that may sit in two layers (it is averaged) and about species whose
 kinetic energies differ so much that their attenuation lengths do too.
 

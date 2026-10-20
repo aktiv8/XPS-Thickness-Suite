@@ -274,6 +274,16 @@ class RelativeDepth(unittest.TestCase):
             rows = DP.relative_depth(sps, 0.0, 60.0, mode)
             self.assertEqual([r.name for r in sorted(rows, key=lambda r: -r.value)], depth_order)
 
+    def test_the_concentration_form_is_the_share_ratio_and_orders_like_the_depths(self):
+        sps = self._stack()
+        rows = DP.relative_depth(sps, 0.0, 60.0, DP.RDP_CONC)
+        for r in rows:
+            self.assertAlmostEqual(r.value, r.pct_hi / r.pct_lo, places=10)
+        depth_order = [r.name for r in sorted(DP.stratification(sps, 0.0, 60.0), key=lambda r: r.z_nm)]
+        self.assertEqual([r.name for r in sorted(rows, key=lambda r: -r.value)], depth_order)
+        self.assertGreater(rows[0].value, 1.0)
+        self.assertLess(rows[-1].value, 1.0)
+
     def test_the_log_of_ratio_form_is_minus_sec_difference_times_depth_over_lambda(self):
         rows = DP.relative_depth(self._stack(), 0.0, 60.0, DP.RDP_RATIO)
         for r, z in zip(rows, (0.3, 1.5, 3.5)):

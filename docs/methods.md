@@ -501,7 +501,10 @@ species' atomic percentage (its $I/S$ as a share of all the species shown) at ea
 to every species, such as a change of the analysed area with tilt. It is undefined where a share is about 1 % or less, because the
 logarithm is then zero or negative, and the tab says so. The second is unit-free, is the Stratification depth in units of $\lambda$
 with the sign reversed, and so always orders the species as Stratification does; a factor common to every species only shifts
-all the values together. Uncertainties come from the counting statistics when they are known (for the first form through the
+all the values together. The third, from Scorciapino et al. (the MEMS page draws it), is the ratio of the atomic share at the
+high angle to that at the low angle, $X_{\mathrm{high}}/X_{\mathrm{low}}$: it is 1 for a species whose share does not change, is
+above 1 for one nearer the surface than the average, needs no logarithm (so a small share is not a problem) and also orders the
+layers by depth. Uncertainties come from the counting statistics when they are known (for the first form through the
 shares, so the other species enter).
 
 Limits, from the papers: it works only if the sample really is layered; a species present in two layers is averaged, which the

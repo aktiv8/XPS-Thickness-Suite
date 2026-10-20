@@ -353,14 +353,16 @@ def stratification(species: Sequence[Species], theta_a: Optional[float] = None, 
 # way of seeing the same species in two layers (that is averaged), and species with very different kinetic energies have
 # different attenuation lengths, which the plain index ignores.
 #
-# Two forms are offered. 'published' is the papers' ln(I_high) / ln(I_low), which only has a meaning for dimensionless
+# Three forms are offered. 'published' is the papers' ln(I_high) / ln(I_low), which only has a meaning for dimensionless
 # intensities, so each species is expressed as its atomic % (I/S as a share of all the species used) at each angle; that
 # also removes any geometry factor common to every species. It is undefined where a share is at or below about 1 % (the
 # logarithm is zero or negative). 'ratio' is the unit-free ln(I_high / I_low) = -(sec_high - sec_low) z / lambda, the
 # Stratification depth in units of lambda with the sign reversed; a factor common to all species only shifts every
-# value by the same amount, so the order never changes.
+# value by the same amount, so the order never changes. 'concentration' is the definition of Scorciapino et al. (J. Phys.
+# Chem. C 113, 21328, 2009): the atomic share at the high angle over that at the low angle, X_high / X_low; it is 1 for a
+# species whose share does not change, needs no logarithm (a share below 1 % is fine) and is what the MEMS page draws.
 
-RDP_PUBLISHED, RDP_RATIO = "published", "ratio"
+RDP_PUBLISHED, RDP_RATIO, RDP_CONC = "published", "ratio", "concentration"
 RDP_MIN_SHARE_PCT = 1.1       # below this the logarithm of the percentage is about zero or negative
 
 
@@ -386,7 +388,7 @@ def relative_depth(species: Sequence[Species], theta_lo: Optional[float] = None,
     """
     Relative depth index of every species between two emission angles: `theta_lo` (default the smallest usable angle)
     and `theta_hi` (default the angle nearest 67.5 degrees within `max_angle`); each species uses its own angle nearest
-    to those. `mode` is RDP_PUBLISHED or RDP_RATIO (see above). The uncertainty comes from the counting statistics when
+    to those. `mode` is RDP_PUBLISHED, RDP_RATIO or RDP_CONC (see above). The uncertainty comes from the counting statistics when
     every species has them. A larger value means nearer the surface.
     """
     usable = {id(sp): np.flatnonzero((np.asarray(sp.angles, dtype=float) <= max_angle) & (sp.intensity > 0))
@@ -443,6 +445,10 @@ def relative_depth(species: Sequence[Species], theta_lo: Optional[float] = None,
             value = math.log(ratio)
             if sig_ok:
                 se = math.hypot(rel_lo[id(sp)], rel_hi[id(sp)])
+        elif mode == RDP_CONC:
+            value = p_hi / p_lo
+            if sig_ok:
+                se = value * math.hypot(share_se(sp, rel_hi, f_hi), share_se(sp, rel_lo, f_lo))
         elif p_lo < RDP_MIN_SHARE_PCT or p_hi < RDP_MIN_SHARE_PCT:
             notes.append(f"undefined: a share of {min(p_lo, p_hi):.2g} % is too small for the ratio of logarithms "
                          "(use the log-of-ratio form)")
