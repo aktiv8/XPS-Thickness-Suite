@@ -145,10 +145,11 @@ def species_from_region(series: Sequence[Tuple[float, object]], angle_offset: fl
 def apply_geometry(species: Sequence[Species], power: float) -> List[Species]:
     """
     Copies of the species with every intensity (and its uncertainty) divided by cos(theta) ** power. Absolute intensities
-    carry any change of the analysed area or acceptance with tilt, which is common to all species: power 0 when the X-ray
-    spot defines the analysed area and nothing changes with angle, 1 when the analyser defines it (the analysed area on
-    the sample then grows as 1 / cos(theta) in the plane of the sample but the collected signal is projected, so the
-    intensity falls as cos(theta)). Ratios of species at one angle, as on the ARXPS tab, do not need this.
+    carry any change of the analysed area with tilt, which is common to all species. Power 0 when the X-ray beam defines
+    the area (it does not change with tilt). When the analyser defines it the area is A0 sec(theta) (Cumpson, J. Electron
+    Spectrosc. 73, 25 (1995), Section 2) so the raw intensity rises as sec(theta) and the reduced intensity I = F / (T A
+    sigma L) needs it removed: power -1, i.e. multiply by cos(theta). That is also what the ARCtick spreadsheet does.
+    Ratios of species at one angle, as on the ARXPS tab, do not need this.
     """
     out = []
     for sp in species:
@@ -338,4 +339,124 @@ def stratification(species: Sequence[Species], theta_a: Optional[float] = None, 
     for r in rows:
         if r.amount is not None and total > 0:
             r.amount_pct = 100.0 * max(r.amount, 0.0) / total
+    return rows
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Relative depth plot (RDP): which species lie nearer the surface, with no depth scale
+# ---------------------------------------------------------------------------------------------------------------
+#
+# C. R. Brundle, G. Conti, P. Mack, J. Electron Spectrosc. Relat. Phenom. 178-179, 433 (2010), Section 4.1 (after Seah et
+# al.); R. N. S. Sodhi et al., Surf. Interface Anal. 49, 1309 (2017). For each species the ratio of the logarithm of its
+# peak intensity at a high (near-grazing) angle to that at a low (near-normal) angle: the nearer the surface a species
+# sits, the more it gains with angle, so the larger the value. It orders layers; it gives no depth, no thickness and no
+# way of seeing the same species in two layers (that is averaged), and species with very different kinetic energies have
+# different attenuation lengths, which the plain index ignores.
+#
+# Two forms are offered. 'published' is the papers' ln(I_high) / ln(I_low), which only has a meaning for dimensionless
+# intensities, so each species is expressed as its atomic % (I/S as a share of all the species used) at each angle; that
+# also removes any geometry factor common to every species. It is undefined where a share is at or below about 1 % (the
+# logarithm is zero or negative). 'ratio' is the unit-free ln(I_high / I_low) = -(sec_high - sec_low) z / lambda, the
+# Stratification depth in units of lambda with the sign reversed; a factor common to all species only shifts every
+# value by the same amount, so the order never changes.
+
+RDP_PUBLISHED, RDP_RATIO = "published", "ratio"
+RDP_MIN_SHARE_PCT = 1.1       # below this the logarithm of the percentage is about zero or negative
+
+
+@dataclass
+class RdpRow:
+    name: str
+    value: Optional[float]              # None when undefined
+    se: Optional[float]
+    pct_lo: Optional[float]             # atomic % at the low and high angle (published form)
+    pct_hi: Optional[float]
+    ratio: Optional[float]              # I_high / I_low
+    curved_t: Optional[float] = None
+    note: str = ""
+
+
+def _nearest(angles: np.ndarray, usable: np.ndarray, target: float) -> int:
+    return int(usable[np.argmin(np.abs(angles[usable] - target))])
+
+
+def relative_depth(species: Sequence[Species], theta_lo: Optional[float] = None, theta_hi: Optional[float] = None,
+                   mode: str = RDP_PUBLISHED, max_angle: float = DEFAULT_MAX_ANGLE, curved_limit: float = 3.0
+                   ) -> List[RdpRow]:
+    """
+    Relative depth index of every species between two emission angles: `theta_lo` (default the smallest usable angle)
+    and `theta_hi` (default the angle nearest 67.5 degrees within `max_angle`); each species uses its own angle nearest
+    to those. `mode` is RDP_PUBLISHED or RDP_RATIO (see above). The uncertainty comes from the counting statistics when
+    every species has them. A larger value means nearer the surface.
+    """
+    usable = {id(sp): np.flatnonzero((np.asarray(sp.angles, dtype=float) <= max_angle) & (sp.intensity > 0))
+              for sp in species}
+    pool = [float(sp.angles[i]) for sp in species for i in usable[id(sp)]]
+    if len(set(pool)) < 2:
+        return [RdpRow(sp.name, None, None, None, None, None, note="needs positive intensities at two usable angles")
+                for sp in species]
+    lo = theta_lo if theta_lo is not None else min(pool)
+    hi = theta_hi if theta_hi is not None else min(sorted(set(pool)), key=lambda a: abs(a - 67.5))
+    if hi == lo:
+        hi = max(pool) if lo == min(pool) else min(pool)
+    idx = {}
+    for sp in species:
+        u = usable[id(sp)]
+        if len(u) < 2:
+            idx[id(sp)] = None
+            continue
+        a = np.asarray(sp.angles, dtype=float)
+        idx[id(sp)] = (_nearest(a, u, lo), _nearest(a, u, hi))
+    have = [sp for sp in species if idx[id(sp)] is not None and idx[id(sp)][0] != idx[id(sp)][1]]
+    sig_ok = bool(have) and all(sp.sigma is not None for sp in have)
+
+    def column(which: int):
+        """I/S, its relative sigma and the share (fraction) of each species that has data."""
+        vals = {id(sp): float(sp.intensity[idx[id(sp)][which]]) / sp.rsf for sp in have}
+        total = sum(vals.values())
+        rel = {id(sp): (float(sp.sigma[idx[id(sp)][which]] / sp.intensity[idx[id(sp)][which]]) if sig_ok else None)
+               for sp in have}
+        return vals, rel, {k: v / total for k, v in vals.items()}
+
+    v_lo, rel_lo, f_lo = column(0) if have else ({}, {}, {})
+    v_hi, rel_hi, f_hi = column(1) if have else ({}, {}, {})
+
+    def share_se(sp, rel, frac):
+        """1-sigma of ln(share): d ln p_i / d ln I_i = 1 - p_i and d ln p_i / d ln I_j = -p_j."""
+        if not sig_ok:
+            return None
+        var = sum(((1.0 if o is sp else 0.0) - frac[id(o)]) ** 2 * rel[id(o)] ** 2 for o in have)
+        return math.sqrt(var)
+
+    rows: List[RdpRow] = []
+    for sp in species:
+        if idx[id(sp)] is None or idx[id(sp)][0] == idx[id(sp)][1]:
+            rows.append(RdpRow(sp.name, None, None, None, None, None, note="needs positive intensities at two usable angles"))
+            continue
+        ia, ib = idx[id(sp)]
+        ratio = float(sp.intensity[ib] / sp.intensity[ia])
+        p_lo, p_hi = 100.0 * f_lo[id(sp)], 100.0 * f_hi[id(sp)]
+        t = curvature_t(sp.angles, sp.intensity, max_angle)
+        notes = []
+        value = se = None
+        if mode == RDP_RATIO:
+            value = math.log(ratio)
+            if sig_ok:
+                se = math.hypot(rel_lo[id(sp)], rel_hi[id(sp)])
+        elif p_lo < RDP_MIN_SHARE_PCT or p_hi < RDP_MIN_SHARE_PCT:
+            notes.append(f"undefined: a share of {min(p_lo, p_hi):.2g} % is too small for the ratio of logarithms "
+                         "(use the log-of-ratio form)")
+        else:
+            value = math.log(p_hi) / math.log(p_lo)
+            if sig_ok:
+                se = abs(value) * math.hypot(share_se(sp, rel_hi, f_hi) / math.log(p_hi),
+                                             share_se(sp, rel_lo, f_lo) / math.log(p_lo))
+        if t is not None and abs(t) > curved_limit:
+            notes.append("ln I is curved against sec θ: the species may sit in more than one layer (averaged here)")
+        ke_far = [o.name for o in species if o is not sp and sp.ke_ev and o.ke_ev
+                  and not SIMILAR_KE_RATIO[0] <= sp.ke_ev / o.ke_ev <= SIMILAR_KE_RATIO[1]]
+        if ke_far:
+            notes.append("kinetic energy differs a lot from " + ", ".join(ke_far[:2])
+                         + ": different attenuation length, so compare with care (Stratification scales by lambda)")
+        rows.append(RdpRow(sp.name, value, se, p_lo, p_hi, ratio, t, "; ".join(notes)))
     return rows

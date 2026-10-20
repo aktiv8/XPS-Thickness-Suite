@@ -551,10 +551,19 @@ class DepthTabSmoke(unittest.TestCase):
         self.assertEqual(len(vals), 2)
         self.assertEqual(vals[0][4], "-")                                             # no single ratio in the fit mode
 
-    def test_the_geometry_option_divides_the_intensities_by_cos_theta(self):
+    def test_the_analyser_geometry_option_multiplies_the_intensities_by_cos_theta(self):
         app, tab = self._tab(S.two_state_series(fitted=True))
         before = tab.species[0].intensity.copy()
-        tab.v["geometry"].set(DT.GEO_COS)
+        tab.v["geometry"].set(DT.GEO_ANALYSER)
+        tab.reload()
+        import numpy as np
+        want = before * np.cos(np.radians(tab.species[0].angles))
+        self.assertTrue(np.allclose(tab.species[0].intensity, want))
+
+    def test_the_tilted_beam_geometry_option_divides_the_intensities_by_cos_theta(self):
+        app, tab = self._tab(S.two_state_series(fitted=True))
+        before = tab.species[0].intensity.copy()
+        tab.v["geometry"].set(DT.GEO_FLUX)
         tab.reload()
         import numpy as np
         want = before / np.cos(np.radians(tab.species[0].angles))
@@ -676,6 +685,31 @@ class DepthTabSmoke(unittest.TestCase):
         self.assertEqual([r[0] for r in rows], ["C 1s", "O 1s", "Al 2p"])
         self.assertEqual(len(tab.prof_fig.axes), 2)                        # profiles, and measured against predicted
         self.assertLess(float(rows[0][2]), 5.0)
+
+    def test_the_relative_depth_page_ranks_the_species_in_both_forms(self):
+        app, tab = self._stack()
+        tab.refresh()
+        rows = [tab.rdp_table.item(i, "values") for i in tab.rdp_table.get_children()]
+        self.assertEqual([r[0] for r in rows], ["C 1s", "O 1s", "Al 2p"])
+        published = [float(r[1]) for r in rows]
+        self.assertGreater(published[0], published[1])                    # the outer layer is nearest the surface
+        self.assertGreater(published[1], published[2])
+        self.assertEqual(len(tab.rdp_fig.axes), 1)
+        tab.rdp_mode.set(DT.RDP_RATIO_LABEL)
+        tab._draw_rdp()
+        ratio = [float(tab.rdp_table.item(i, "values")[1]) for i in tab.rdp_table.get_children()]
+        self.assertNotEqual(ratio, published)
+        self.assertTrue(ratio[0] > ratio[1] > ratio[2])
+
+    def test_the_three_point_method_gives_profiles_without_an_alpha(self):
+        app, tab = self._stack()
+        tab.prof_method.set(DT.METHOD_3PT)
+        tab._calc_profile()
+        self.assertEqual([p[0].name for p in tab.profiles], ["C 1s", "O 1s", "Al 2p"])
+        rows = [tab.prof_table.item(i, "values") for i in tab.prof_table.get_children()]
+        self.assertTrue(all(r[1] == "-" for r in rows))                  # no smoothing parameter
+        self.assertIn("ARCtick", tab.prof_fig.axes[0].get_title())
+        self.assertTrue(all("knots" in r[5] for r in rows))
 
     def test_non_negative_bulk_constant_and_fraction_options(self):
         app, tab = self._stack()

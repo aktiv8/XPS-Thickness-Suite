@@ -422,13 +422,19 @@ angle are drawn as open symbols and left out of the fits.
 
 ### Geometry
 
-An absolute intensity also carries any change of the analysed area or acceptance with tilt, a factor common to every species.
-Ratios of species at one angle (as on the ARXPS tab) do not need it, and parallel lines on the Trend Plot stay parallel,
-but depths and amounts do. The *Geometry* option divides every intensity by $\cos\theta$ when the analyser defines the
-analysed area; with an X-ray spot that defines it, nothing is changed. If every species, the substrate included, falls
-with angle much faster than a thin layer can explain (a species placed deeper than the whole sample is thick), the
-analysed area probably changes with tilt and the cosine correction is worth trying. On a K-Alpha tilt series of a silicon
-wafer the oxygen 1s signal is placed 2.6 nm deep without it, outside a 1.7 nm oxide, and 0.6 nm deep with it.
+An absolute intensity also carries any change of the analysed area with tilt, a factor common to every species. Ratios of
+species at one angle (as on the ARXPS tab) do not need it, and parallel lines on the Trend Plot stay parallel, but depths and
+amounts do. Cumpson [12] distinguishes two instrument types. If the **X-ray beam** defines the area, it does not change with
+tilt and nothing needs correcting (the default). If the **analyser** defines it (its field of view), the area on the sample is
+$A_0\sec\theta$, so the raw intensity rises as $\sec\theta$; the *Geometry* option then multiplies every intensity by
+$\cos\theta$. This is the convention of the ARCtick spreadsheet too (its Stratification, AR/SR/XPS and Regularisation
+sheets all differ between the two settings by $\sec\theta$). If every species, the substrate included, falls with angle much
+faster than a thin layer can explain (a species placed deeper than the whole sample is thick), the analysed area probably
+changes with tilt and this setting is worth checking. On a K-Alpha (beam-defined) tilt series of a silicon wafer the oxygen
+1s signal is placed 2.6 nm deep without a correction, outside a 1.7 nm oxide, and 0.6 nm deep when every intensity is divided by
+$\cos\theta$. That third option (*divide by cos θ (empirical: tilted beam)*) is the opposite of the analyser correction and is
+not from ARCtick or the paper: it is kept because it removed an impossible result on that instrument, perhaps because the beam's
+flux per unit area falls on tilt, and it should be judged against your own instrument.
 
 ### Stratification
 
@@ -455,6 +461,33 @@ Limits: a species that is spread over a thickness, or sits in two layers, is rep
 curvature of $\ln I$ against $\sec\theta$ (the t statistic of the quadratic term) and warns when it is large. A species whose
 intensity rises with angle lies at the surface and gets a negative depth with a note. A substrate that extends to infinite
 depth is not a thin layer: its signal is reported at its information depth and the curvature warning usually fires.
+
+### Relative depth plot
+
+The relative depth plot (RDP) is the simplest angle-resolved analysis: it says **which species lie nearer the surface**, and
+nothing else [22, 23]. It has no depth scale and no thickness. For each species it compares the signal at a high (near-grazing)
+and a low (near-normal) angle; the nearer the surface a species sits, the more it gains with angle, so the larger its value.
+Plotted with the surface at the top, the species fall in the order of the layers (a self-assembled monolayer on silver, for
+example, puts Ag 3d lowest, then S 2p, then the carbon and oxygen of the chain [22]). The tab offers two forms:
+
+```math
+\mathrm{RDP}_{\mathrm{pub}} = \frac{\ln p(\theta_{high})}{\ln p(\theta_{low})},\qquad
+\mathrm{RDP}_{\mathrm{ratio}} = \ln\frac{I(\theta_{high})}{I(\theta_{low})} = -\frac{(\sec\theta_{high}-\sec\theta_{low})\,z}{\lambda}
+```
+
+The first is the definition in the papers, a ratio of logarithms; a logarithm needs a dimensionless argument, so $p$ is the
+species' atomic percentage (its $I/S$ as a share of all the species shown) at each angle, which also removes any factor common
+to every species, such as a change of the analysed area with tilt. It is undefined where a share is about 1 % or less, because the
+logarithm is then zero or negative, and the tab says so. The second is unit-free, is the Stratification depth in units of $\lambda$
+with the sign reversed, and so always orders the species as Stratification does; a factor common to every species only shifts
+all the values together. Uncertainties come from the counting statistics when they are known (for the first form through the
+shares, so the other species enter).
+
+Limits, from the papers: it works only if the sample really is layered; a species present in two layers is averaged, which the
+curvature warning of Stratification also reports; and species with widely separated kinetic energies have different attenuation
+lengths, which the plain index ignores, so the tab flags large kinetic-energy differences and Stratification (which scales by
+$\lambda$) should be used to compare them. Brundle and co-workers [22] note Cumpson's point that it is neither a depth
+profile nor a measure of layer thickness. The angles are those chosen on the Stratification page.
 
 ### Layers (Gries signal ratios)
 
@@ -537,6 +570,35 @@ The noise bands drawn on the plot are the covariance of the linear estimator,
 with $L$ the second-difference matrix. They show how far counting noise alone moves the profile; they do **not** include the
 bias that smoothing always adds, so a narrow band does not mean an accurate profile. The species are solved one at a time;
 *Atomic fraction* rescales them to add to 1 at each depth for display only.
+
+### Three-point profile (the ARCtick method)
+
+The *Method* box on the same tab also offers the method of the ARCtick spreadsheet [12], which treats the problem differently:
+instead of smoothing a fine grid, it uses a model with only as many parameters as the data can support. Cumpson shows that the
+depth resolution is limited by the signal-to-noise ratio, not by the number of angles, and that five angles of 5% precision hold
+about three degrees of freedom. The highest generalised frequency the data can resolve, for $n$ angles of relative uncertainty
+$\sigma/I$, is
+
+```math
+\omega_{max} = \frac{1}{\pi}\cosh^{-1}\!\left[\pi (n-1)\left(\frac{I}{\sigma}\right)^{2}\right]
+```
+
+(2.93 for $n=5$ and 5%, the value in the spreadsheet's K27 cell), which fixes three knots spaced geometrically,
+
+```math
+z_1 = \lambda\cos\theta_{max},\qquad z_2 = z_1 e^{\pi/\omega_{max}},\qquad z_3 = z_2 e^{\pi/\omega_{max}}
+```
+
+The profile (Paynter's model) is $c_1$ down to $z_1$, straight lines to $c_2$ at $z_2$ and $c_3$ at $z_3$, then constant at $c_3$.
+The intensity is linear in the three concentrations, so they come from weighted linear least squares with no smoothing
+parameter; the covariance $(A_w^T A_w)^{-1}$ gives the noise bands. If a species is *zero below z*, the concentration is zero
+below the third knot instead of continuing at $c_3$. *Auto alpha*, *Non-negative* and the number of depth points do not apply.
+Where the two methods differ is a smooth profile (Tikhonov) against a three-number description (three-point); both agree where
+the data are informative, and any feature narrower than the resolution is not in the data under either.
+
+*Not identical to the spreadsheet.* The knots, the model and the least-squares solution follow Cumpson's paper and the
+spreadsheet's formulas, but the spreadsheet's integrals are in a VBA module that could not be read, so its exact treatment of
+the bulk tail and of its depth-scale slider is inferred from the paper, and the Suite has no equivalent of the slider.
 
 ### Profile (Murdoch)
 

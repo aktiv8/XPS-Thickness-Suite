@@ -167,14 +167,14 @@ class Stratification(unittest.TestCase):
             hits += abs(r.z_nm - 2.0) <= 2.0 * r.z_se_nm
         self.assertGreater(hits / trials, 0.90)
 
-    def test_dividing_by_cos_theta_removes_a_geometry_factor_common_to_all_species(self):
+    def test_the_analyser_geometry_factor_sec_theta_is_removed_by_multiplying_by_cos_theta(self):
         cos = np.cos(np.radians(ANGLES))
         sps = [self._delta("A", 0.5, 3.0, 10.0), self._delta("B", 2.0, 3.0, 40.0)]
         for sp in sps:
-            sp.intensity = sp.intensity * cos                                # the analyser-defined-area projection
+            sp.intensity = sp.intensity / cos                                # analyser-defined area A0 sec(theta)
         wrong = DP.stratification(sps, 0.0, 60.0)
-        right = DP.stratification(DP.apply_geometry(sps, 1.0), 0.0, 60.0)
-        self.assertGreater(wrong[0].z_nm - 0.5, 0.5)
+        right = DP.stratification(DP.apply_geometry(sps, -1.0), 0.0, 60.0)
+        self.assertGreater(abs(wrong[0].z_nm - 0.5), 0.5)
         for r, z in zip(right, (0.5, 2.0)):
             self.assertAlmostEqual(r.z_nm, z, places=9)
         self.assertIs(DP.apply_geometry(sps, 0.0)[0], sps[0])               # power 0 changes nothing
@@ -252,6 +252,76 @@ class RobustShirley(unittest.TestCase):
         bg, ok = AR.shirley_info(y, 0.1)
         self.assertTrue(np.all(np.isfinite(bg)))
         self.assertGreaterEqual(float(np.sum(y - bg)), 0.2 * float(np.sum(y - np.linspace(y[:3].mean(), y[-3:].mean(), len(y)))))
+
+
+class RelativeDepth(unittest.TestCase):
+    """The relative depth plot (RDP): Brundle 2010 / Sodhi 2017."""
+    SEC = 1.0 / np.cos(np.radians(ANGLES))
+
+    def _stack(self, scale=1.0, sigma=None):
+        out = []
+        for name, z, n in (("top", 0.3, 30.0), ("mid", 1.5, 40.0), ("deep", 3.5, 60.0)):
+            sp = DP.Species(name, "r", ANGLES.copy(), scale * n * np.exp(-z * self.SEC / 3.0), lam_nm=3.0, ke_ev=1000.0)
+            if sigma:
+                sp.sigma = sp.intensity * sigma
+            out.append(sp)
+        return out
+
+    def test_both_forms_order_the_layers_like_their_depths(self):
+        sps = self._stack()
+        depth_order = [r.name for r in sorted(DP.stratification(sps, 0.0, 60.0), key=lambda r: r.z_nm)]
+        for mode in (DP.RDP_PUBLISHED, DP.RDP_RATIO):
+            rows = DP.relative_depth(sps, 0.0, 60.0, mode)
+            self.assertEqual([r.name for r in sorted(rows, key=lambda r: -r.value)], depth_order)
+
+    def test_the_log_of_ratio_form_is_minus_sec_difference_times_depth_over_lambda(self):
+        rows = DP.relative_depth(self._stack(), 0.0, 60.0, DP.RDP_RATIO)
+        for r, z in zip(rows, (0.3, 1.5, 3.5)):
+            self.assertAlmostEqual(r.value, -z * (2.0 - 1.0) / 3.0, places=10)
+
+    def test_the_published_form_does_not_depend_on_units_but_the_ratio_form_only_shifts(self):
+        a, b = self._stack(), self._stack(scale=1000.0)
+        for x, y in zip(DP.relative_depth(a, 0.0, 60.0), DP.relative_depth(b, 0.0, 60.0)):
+            self.assertAlmostEqual(x.value, y.value, places=12)
+        geo = DP.apply_geometry(self._stack(), -1.0)                      # a factor common to every species
+        base = DP.relative_depth(self._stack(), 0.0, 60.0, DP.RDP_RATIO)
+        shifted = DP.relative_depth(geo, 0.0, 60.0, DP.RDP_RATIO)
+        diffs = {round(s.value - b.value, 10) for s, b in zip(shifted, base)}
+        self.assertEqual(len(diffs), 1)
+
+    def test_a_trace_species_is_undefined_in_the_published_form_only(self):
+        sps = self._stack()
+        sps.append(DP.Species("trace", "r", ANGLES.copy(), 0.01 * np.exp(-0.2 * self.SEC / 3.0), lam_nm=3.0))
+        row = DP.relative_depth(sps, 0.0, 60.0, DP.RDP_PUBLISHED)[-1]
+        self.assertIsNone(row.value)
+        self.assertIn("undefined", row.note)
+        self.assertIsNotNone(DP.relative_depth(sps, 0.0, 60.0, DP.RDP_RATIO)[-1].value)
+
+    def test_the_uncertainty_matches_a_monte_carlo_estimate(self):
+        rng = np.random.default_rng(3)
+        sps = self._stack(sigma=0.03)
+        for mode in (DP.RDP_PUBLISHED, DP.RDP_RATIO):
+            rows = DP.relative_depth(sps, 0.0, 60.0, mode)
+            draws = []
+            for _ in range(4000):
+                noisy = [DP.Species(s.name, "r", s.angles, s.intensity * (1 + rng.normal(0, 0.03, len(s.intensity))),
+                                    sigma=s.sigma, lam_nm=3.0, ke_ev=1000.0) for s in sps]
+                draws.append([r.value for r in DP.relative_depth(noisy, 0.0, 60.0, mode)])
+            for r, sd in zip(rows, np.std(draws, axis=0)):
+                self.assertAlmostEqual(r.se / sd, 1.0, delta=0.12)
+
+    def test_curvature_and_kinetic_energy_notes(self):
+        sec = self.SEC
+        two = DP.Species("two", "r", ANGLES.copy(), 20 * np.exp(-0.2 * sec / 3.0) + 20 * np.exp(-4.0 * sec / 3.0),
+                         lam_nm=3.0, ke_ev=1000.0)
+        far = DP.Species("far", "r", ANGLES.copy(), 30 * np.exp(-1.0 * sec / 3.0), lam_nm=3.0, ke_ev=300.0)
+        rows = DP.relative_depth([two, far], 0.0, 60.0, DP.RDP_RATIO, max_angle=80.0)
+        self.assertIn("more than one layer", rows[0].note)
+        self.assertIn("kinetic energy differs", rows[1].note)
+
+    def test_too_few_angles_gives_undefined_rows(self):
+        sp = DP.Species("x", "r", np.array([0.0]), np.array([5.0]), lam_nm=3.0)
+        self.assertIsNone(DP.relative_depth([sp])[0].value)
 
 
 if __name__ == "__main__":

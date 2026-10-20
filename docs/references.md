@@ -68,8 +68,17 @@ only where they were checked against the paper itself or a bibliographic record.
     mean free paths in solids, *Surf. Interface Anal.* **1**, 2-11 (1979). The kinetic-energy-only attenuation length formula
     offered there.
 
+22. C. R. Brundle, G. Conti and P. Mack, XPS and angle resolved XPS, in the semiconductor industry: characterization and
+    metrology control of ultra-thin films, *J. Electron Spectrosc. Relat. Phenom.* **178-179**, 433-448 (2010).
+    DOI [10.1016/j.elspec.2010.03.008](https://doi.org/10.1016/j.elspec.2010.03.008). Section 4.1 defines the relative depth
+    plot (RDP) used on the Relative depth page.
+
+23. R. N. S. Sodhi, P. Brodersen, L. Cademartiri, M. M. Thuo and C. A. Nijhuis, Surface and buried interface layer studies on
+    challenging structures as studied by ARXPS, *Surf. Interface Anal.* **49**, 1309-1315 (2017).
+    DOI [10.1002/sia.6270](https://doi.org/10.1002/sia.6270). An RDP worked example (gallium-indium eutectic and its oxide).
+
 ## Citing
 
 If you use the Topofactor correction in published work, please cite the paper by Shard and co-workers [4] and the
 Thickogram paper by Cumpson [3]. For the Strohmeier calculator cite [1], and for the Cu presets [5]. For the
-angle-resolved analysis see [12] and [14]; for fits taken from CasaXPS see [17]; for the Profile (Murdoch) panel cite [20].
+angle-resolved analysis see [12] and [14]; for fits taken from CasaXPS see [17]; for the Profile (Murdoch) panel cite [20]; for the Relative depth page cite [22] and [23].

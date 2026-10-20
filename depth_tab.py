@@ -38,7 +38,12 @@ MUR_FROM_SPECIES = "Species (areas / RSF)"
 MUR_FROM_CSV = "CSV of at%"
 SUB_LABEL = "Sub"
 GEO_NONE = "none (X-ray spot sets the area)"
-GEO_COS = "divide by cos θ (analyser sets it)"
+GEO_ANALYSER = "multiply by cos θ (analyser sets it)"
+RDP_PUBLISHED_LABEL = "ln I(high) / ln I(low)  (as published)"
+RDP_RATIO_LABEL = "ln [ I(high) / I(low) ]  (unit-free)"
+METHOD_TIKHONOV = "Tikhonov (smooth)"
+METHOD_3PT = "3-point (ARCtick)"
+GEO_FLUX = "divide by cos θ (empirical: tilted beam)"
 # a colour-blind-safe cycle (Okabe and Ito) with a few extras
 PALETTE = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#F0E442", "#000000",
            "#7F3C8D", "#11A579", "#3969AC", "#E73F74"]
@@ -72,6 +77,7 @@ class DepthTab(ttk.Frame):
         self.show_fits = tk.BooleanVar(value=True)
         self.strat_a, self.strat_b = tk.StringVar(), tk.StringVar()
         self.strat_all = tk.BooleanVar(value=False)
+        self.rdp_mode = tk.StringVar(value=RDP_PUBLISHED_LABEL)
         self.n_layers = tk.StringVar(value="2")
         self.layer_d = [tk.StringVar(value="1.0") for _ in range(MAX_LAYERS)]
         self.layer_vars = []                 # per species: StringVar holding "1".."K" or SUB_LABEL
@@ -82,6 +88,7 @@ class DepthTab(ttk.Frame):
         self.prof_auto, self.prof_logalpha = tk.BooleanVar(value=True), tk.StringVar(value="3.0")
         self.prof_nonneg, self.prof_frac = tk.BooleanVar(value=False), tk.BooleanVar(value=False)
         self.prof_bands = tk.BooleanVar(value=True)
+        self.prof_method = tk.StringVar(value=METHOD_TIKHONOV)
         self.prof_note = tk.StringVar(value="")
         self.prof_bulk = []                  # per species: (mode StringVar, z_c StringVar)
         self.profiles = []                   # depthreg.ProfileFit of the last calculation
@@ -164,9 +171,12 @@ class DepthTab(ttk.Frame):
             cb.bind("<<ComboboxSelected>>", lambda e: self.reload())
         self.geo_cb = self._combo(card, self.v["geometry"], 7, "Geometry:", "Any change of the analysed area with tilt "
                                   "scales every intensity by the same factor. 'none' assumes the X-ray spot defines "
-                                  "the area. If all species fall with angle much faster than their depths can explain "
-                                  "(a species placed deeper than the whole sample is thick), try dividing by cos θ.",
-                                  [GEO_NONE, GEO_COS])
+                                  "the area. 'analyser' sets it when the area on the sample is the analyser's field of view "
+                                  "(it grows as 1/cos θ, so the raw intensity rises as 1/cos θ and is multiplied by cos θ "
+                                  "here; Cumpson 1995, as in ARCtick). If all species fall with angle much faster than "
+                                  "their depths can explain, check this setting; 'divide by cos θ' is the opposite, empirical "
+                                  "correction that helped a K-Alpha tilt series (the beam's flux per area falls on tilt).",
+                                  [GEO_NONE, GEO_ANALYSER, GEO_FLUX])
         self.geo_cb.bind("<<ComboboxSelected>>", lambda e: self.reload())
         ck = ttk.Checkbutton(card, text="Transmission-correct", variable=self.transmission, style="Card.TCheckbutton",
                              command=self.reload)
@@ -327,7 +337,8 @@ class DepthTab(ttk.Frame):
             return
         for sp in species:
             sp.lam_nm = (float(self.lam_default(sp.ke_ev)) if sp.ke_ev else 2.0) * factor
-        species = DP.apply_geometry(species, 1.0 if self.v["geometry"].get() == GEO_COS else 0.0)
+        geo = self.v["geometry"].get()
+        species = DP.apply_geometry(species, -1.0 if geo == GEO_ANALYSER else 1.0 if geo == GEO_FLUX else 0.0)
         self.species = species
         self._fill_angle_choices()
         self._fill_species()
@@ -366,6 +377,7 @@ class DepthTab(ttk.Frame):
         self._after = None
         self._draw()
         self._draw_strat()
+        self._draw_rdp()
         self._draw_layers()
 
     # --- right-hand side ------------------------------------------------------------------------------
@@ -378,6 +390,7 @@ class DepthTab(ttk.Frame):
         self.plot_nb = nb
         self._build_trend_page(nb)
         self._build_strat_page(nb)
+        self._build_rdp_page(nb)
         self._build_layers_page(nb)
         self._build_profile_page(nb)
         self._build_murdoch_page(nb)
@@ -513,6 +526,74 @@ class DepthTab(ttk.Frame):
             self.strat_table.insert("", "end", values=(
                 r.name, _fmt(r.z_nm, "{:.2f}"), _fmt(r.z_se_nm, "{:.2f}"), _fmt(r.amount_pct, "{:.1f}"),
                 _fmt(r.ratio, "{:.3f}"), _fmt(r.curved_t, "{:.1f}"), r.note))
+
+    # --- relative depth plot --------------------------------------------------------------------------------
+    def _build_rdp_page(self, nb):
+        page = ttk.Frame(nb, style="Card.TFrame", padding=4)
+        nb.add(page, text="Relative depth")
+        bar = ttk.Frame(page, style="Card.TFrame")
+        bar.pack(side="top", fill="x")
+        ttk.Label(bar, text="Formula:", style="Card.TLabel").pack(side="left")
+        cb = ttk.Combobox(bar, textvariable=self.rdp_mode, values=[RDP_PUBLISHED_LABEL, RDP_RATIO_LABEL],
+                          state="readonly", width=34)
+        cb.pack(side="left", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda e: self._draw_rdp())
+        Tooltip(cb, "as published (Brundle 2010, Sodhi 2017): the logarithm of each species' atomic % at the high angle "
+                    "divided by that at the low angle; undefined for shares near or below 1 %. unit-free: the logarithm "
+                    "of the intensity ratio, which does not depend on units and gives the same order as Stratification.")
+        ttk.Label(bar, text="  Angles are those of the Stratification page.", style="CardMuted.TLabel").pack(side="left")
+        lower = ttk.Frame(page, style="Card.TFrame")
+        lower.pack(side="bottom", fill="x", pady=(6, 0))
+        cols = ("sp", "rdp", "se", "pct", "ratio", "curv", "note")
+        heads = ("Species", "RDP", "± se", "Atomic % low → high", "I(b)/I(a)", "Curvature t", "Note")
+        widths = (90, 70, 60, 140, 75, 85, 330)
+        self.rdp_table = ttk.Treeview(lower, columns=cols, show="headings", height=4 if self.compact else 6)
+        for col, h, w in zip(cols, heads, widths):
+            self.rdp_table.heading(col, text=h)
+            self.rdp_table.column(col, width=w, anchor="w" if col in ("sp", "note") else "e", stretch=(col == "note"))
+        self.rdp_table.pack(fill="x")
+        self.rdp_fig, self.rdp_canvas = self._canvas(page)
+
+    def _draw_rdp(self):
+        fig = self.rdp_fig
+        fig.clear()
+        self.rdp_table.delete(*self.rdp_table.get_children())
+        species = self.active() if self.species else []
+        if len(species) < 1:
+            ax = fig.add_subplot(111)
+            ax.axis("off")
+            ax.text(0.5, 0.5, "Relative depth plot: each species is placed by how much it gains with angle, so the "
+                              "ones nearer the surface\nsit higher. It orders layers only; there is no depth scale or "
+                              "thickness here (see Stratification).", ha="center", va="center", color=MUTED,
+                    fontsize=11)
+            self.rdp_canvas.draw_idle()
+            return
+        try:
+            max_angle = self._number("max_angle", "Max angle")
+            a, b = float(self.strat_a.get()), float(self.strat_b.get())
+        except ValueError:
+            max_angle, a, b = DP.DEFAULT_MAX_ANGLE, None, None
+        mode = DP.RDP_RATIO if self.rdp_mode.get() == RDP_RATIO_LABEL else DP.RDP_PUBLISHED
+        rows = DP.relative_depth(species, a, b, mode, max_angle)
+        ax = fig.add_subplot(111)
+        placed = sorted([(r.value, i) for i, r in enumerate(rows) if r.value is not None], reverse=True)
+        for x, (value, i) in enumerate(placed):
+            r, colour = rows[i], PALETTE[self.species.index(species[i]) % len(PALETTE)]
+            if r.se:
+                ax.errorbar([x], [value], yerr=[r.se], color=colour, capsize=3, lw=1)
+            ax.plot([x], [value], "o", color=colour, ms=9)
+            ax.text(x, value, "  " + r.name, ha="left", va="center", fontsize=9, color=colour)
+        ax.set_xlim(-0.6, max(len(placed) - 0.4, 1.6))
+        ax.set_xticks([])
+        ax.set_ylabel("Relative depth index (higher = nearer the surface)")
+        ax.set_title("Relative depth plot: ordering only, no depth scale", fontsize=10)
+        ax.grid(alpha=0.3, axis="y")
+        fig.subplots_adjust(left=0.09, right=0.98, top=0.9, bottom=0.08)
+        self.rdp_canvas.draw_idle()
+        for r in rows:
+            pct = f"{r.pct_lo:.1f} → {r.pct_hi:.1f}" if r.pct_lo is not None else "-"
+            self.rdp_table.insert("", "end", values=(r.name, _fmt(r.value, "{:.3f}"), _fmt(r.se, "{:.3f}"), pct,
+                                                      _fmt(r.ratio, "{:.3f}"), _fmt(r.curved_t, "{:.1f}"), r.note))
 
     # --- layers (Gries) -----------------------------------------------------------------------------------
     def _k(self):
@@ -779,6 +860,15 @@ class DepthTab(ttk.Frame):
             e = ttk.Entry(bar, textvariable=var, width=width)
             e.pack(side="left", padx=(0, 8))
             Tooltip(e, tip)
+        ttk.Label(bar, text="Method:", style="Card.TLabel").pack(side="left", padx=(0, 2))
+        mcb = ttk.Combobox(bar, textvariable=self.prof_method, values=[METHOD_TIKHONOV, METHOD_3PT], state="readonly",
+                           width=17)
+        mcb.pack(side="left", padx=(0, 8))
+        mcb.bind("<<ComboboxSelected>>", lambda e: self._calc_profile())
+        Tooltip(mcb, "Tikhonov: a smooth profile on a grid of depth slabs (α sets the smoothing). 3-point: the ARCtick "
+                     "method (Cumpson 1995, Paynter's model): three concentrations at three knots whose spacing the data "
+                     "can resolve, so there is no smoothing parameter; Auto α, Non-negative and the depth points do not "
+                     "apply, and 'zero below z' means nothing below the third knot, otherwise the last value continues.")
         ck = ttk.Checkbutton(bar, text="Auto α", variable=self.prof_auto, style="Card.TCheckbutton",
                              command=self._calc_profile)
         ck.pack(side="left")
@@ -861,8 +951,11 @@ class DepthTab(ttk.Frame):
         for sp in species:
             bulk, zc = self._bulk_of(sp)
             try:
-                self.profiles.append((sp, DR.fit_profile(sp, depth, n, alpha, self.prof_nonneg.get(), bulk, zc,
-                                                         self._max_angle()), bulk, zc))
+                if self.prof_method.get() == METHOD_3PT:
+                    fit = DR.fit_three_point(sp, depth, max(n, 20), tail=(bulk != "zero"), max_angle=self._max_angle())
+                else:
+                    fit = DR.fit_profile(sp, depth, n, alpha, self.prof_nonneg.get(), bulk, zc, self._max_angle())
+                self.profiles.append((sp, fit, bulk, zc))
             except ValueError as exc:
                 notes.append(str(exc))
         self.prof_note.set(" ".join(notes))
@@ -895,12 +988,13 @@ class DepthTab(ttk.Frame):
             ax2.errorbar(f.angles, f.measured, yerr=f.sigma, fmt="o", color=colour, ms=4, capsize=2)
             ax2.plot(f.angles, f.predicted, "-", color=colour, lw=1.2)
             self.prof_table.insert("", "end", values=(
-                sp.name, f"{math.log10(f.alpha):.1f}", _fmt(f.chi2_red, "{:.2f}"), self.BULK_LABELS[bulk] + (
-                    f" {zc:g}" if bulk != "free" and zc is not None else ""),
+                sp.name, f"{math.log10(f.alpha):.1f}" if math.isfinite(f.alpha) else "-", _fmt(f.chi2_red, "{:.2f}"),
+                self.BULK_LABELS[bulk] + (f" {zc:g}" if bulk != "free" and zc is not None else ""),
                 f"{float(np.max(f.c)):.3g}", "; ".join(n for n in f.notes if "resolution" not in n)))
         ax1.set_xlabel("Depth below the surface (nm)")
         ax1.set_ylabel("Atomic fraction" if frac is not None else "Concentration (relative to the largest)")
-        ax1.set_title("Regularised depth profiles", fontsize=10)
+        ax1.set_title("Three-point depth profiles (ARCtick method)" if self.prof_method.get() == METHOD_3PT
+                      else "Regularised depth profiles", fontsize=10)
         ax1.grid(alpha=0.3)
         ax1.axhline(0, color="black", lw=0.6)
         ax1.legend(fontsize=8, loc="best")

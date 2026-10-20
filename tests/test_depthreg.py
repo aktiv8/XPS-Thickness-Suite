@@ -151,5 +151,54 @@ class Profiles(unittest.TestCase):
         self.assertTrue(np.allclose(frac.sum(axis=0), 1.0))
 
 
+class ThreePoint(unittest.TestCase):
+    """The ARCtick spreadsheet's method (Cumpson 1995, Eqs. 11, 12, 23-26)."""
+    KNOTS = (1.0, 2.5, 6.0)
+
+    def test_omega_max_is_the_spreadsheets_k27_cell(self):
+        self.assertAlmostEqual(DR.omega_max(5, 0.05), 2.93343, places=4)       # ARCTICK.XLS Regularisation!K27 for n=5, 5%
+
+    def test_the_knots_start_at_lambda_cos_theta_max_and_grow_geometrically(self):
+        (z1, z2, z3), w = DR.three_point_knots(2.3, 67.5, 5, 0.05)
+        self.assertAlmostEqual(z1, 2.3 * math.cos(math.radians(67.5)), places=12)
+        self.assertAlmostEqual(z2 / z1, math.exp(math.pi / w), places=12)
+        self.assertAlmostEqual(z3 / z2, z2 / z1, places=12)
+
+    def test_the_model_matrix_is_the_laplace_integral_of_the_piecewise_linear_profile(self):
+        c, lam, ang = [3.0, 5.0, 2.0], 2.0, [0.0, 30.0, 55.0, 70.0]
+        z = np.linspace(0.0, 80.0, 400001)
+        for tail in (True, False):
+            got = DR.three_point_matrix(ang, lam, self.KNOTS, tail) @ np.array(c)
+            prof = DR.three_point_profile(z, c, self.KNOTS, tail)
+            for g, a in zip(got, ang):
+                L = lam * math.cos(math.radians(a))
+                self.assertAlmostEqual(g, float(np.trapezoid(prof * np.exp(-z / L), z)), delta=2e-5)
+
+    def test_noiseless_data_give_back_the_three_concentrations_and_zero_chi2(self):
+        c = np.array([4.0, 7.0, 1.5])
+        knots, _ = DR.three_point_knots(LAM, 72.0, len(ANG[ANG <= 72]), 0.02)
+        sp = DP.Species("s", "r", ANG.copy(), DR.three_point_matrix(ANG, LAM, knots) @ c, sigma=0.02 * DR.three_point_matrix(
+            ANG, LAM, knots) @ c, lam_nm=LAM)
+        fit = DR.fit_three_point(sp, 12.0, 40, max_angle=72.0, rel_sigma=0.02)
+        z = fit.z_nm
+        self.assertLess(_rms(fit.c, DR.three_point_profile(z, c, knots)), 1e-8)
+        self.assertLess(fit.chi2_red, 1e-12)
+        self.assertTrue(math.isnan(fit.alpha))
+
+    def test_zero_below_the_third_knot_drops_the_tail_and_bands_follow_the_covariance(self):
+        c = np.array([4.0, 7.0, 1.5])
+        sp, _ = _species(np.where(Z < 3.0, 5.0, 0.0), noise=0.02)
+        tail, none = DR.fit_three_point(sp, 12.0, 40), DR.fit_three_point(sp, 12.0, 40, tail=False)
+        self.assertEqual(none.c[-1], 0.0)
+        self.assertGreater(tail.c[-1], 0.0)
+        self.assertTrue(np.all(none.c_se >= 0) and float(np.max(none.c_se)) > 0)
+        self.assertGreater(none.chi2_red, 0.0)
+
+    def test_it_needs_three_angles(self):
+        sp = DP.Species("s", "r", np.array([0.0, 40.0]), np.array([5.0, 3.0]), lam_nm=3.0)
+        with self.assertRaises(ValueError):
+            DR.fit_three_point(sp)
+
+
 if __name__ == "__main__":
     unittest.main()

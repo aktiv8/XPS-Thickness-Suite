@@ -300,7 +300,18 @@ layer. *Use every angle* fits all the angles instead.
 Notes: a finite overlayer is not a thin buried layer, so its intensity rises with angle and the tab reports it at the surface
 with a note; a substrate that goes on forever is reported at its information depth. In the synthetic fitted sample the
 silicon substrate state is placed **1.50 nm** deep, which is the thickness of the oxide above it. If every species falls with
-angle faster than a thin layer can explain, set *Geometry* to *divide by cos theta* on the Data card.
+angle faster than a thin layer can explain, set *Geometry* to *multiply by cos θ (analyser sets it)* on the Data card if the analyser (not the X-ray beam) defines the analysed area.
+
+### Relative depth
+
+A quick **layer-ordering** plot. Each species is a dot, placed by how much it gains between a low and a high angle (the two
+angles chosen on the Stratification page): the higher the dot, the nearer the surface. Use it first, to see whether the order of
+the layers is what you expect, before trusting a depth from Stratification or Layers. There is no depth scale here. The
+*Formula* box offers the definition from the literature (the logarithm of each species' atomic % at the high angle divided by
+that at the low angle, undefined for shares of about 1 % or less) and a unit-free form, the logarithm of the intensity ratio,
+which orders the species the same way as Stratification. The table adds the uncertainty, the atomic percentages and the
+curvature statistic; the note warns about a species that may sit in two layers (it is averaged) and about species whose
+kinetic energies differ so much that their attenuation lengths do too.
 
 ### Layers (Gries)
 
@@ -331,6 +342,10 @@ or that a surface species is *zero below z*, and tick *Non-negative*. *Atomic fr
 and the shaded bands are the uncertainty from counting noise (not the smoothing bias). With only a few angles the depth
 resolution is limited to roughly lambda times cos theta at the largest angle, which the note under the buttons states; a
 negative concentration in a free profile means an assumption, such as an attenuation length, needs another look.
+
+The *Method* box switches to the **3-point (ARCtick)** method: three concentrations at three knots whose spacing the data can
+resolve, fitted by least squares with no smoothing parameter (so Auto alpha, Non-negative and the depth points do nothing). It
+gives a much blunter profile than the Tikhonov one, which is the point: it shows only what five or so angles can support.
 
 Starting attenuation lengths are inelastic mean free paths; set *AL / IMFP* to about 0.8 to approximate attenuation lengths
 and press *Reload species*. Keep to angles below about 70 degrees.

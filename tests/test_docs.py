@@ -202,8 +202,8 @@ class ClaimsMatchTheCode(unittest.TestCase):
 
     def test_the_geometry_example_in_methods(self):
         methods = _read("methods.md")
-        self.assertIn("2.6 nm deep without it", methods)
-        self.assertIn("0.6 nm deep with it", methods)
+        self.assertIn("2.6 nm deep without a correction", methods.replace('\n', " "))
+        self.assertIn("0.6 nm deep when every intensity is divided by", methods.replace('\n', " "))
 
     def test_the_sample_files_are_what_the_generator_writes(self):
         import tempfile
