@@ -91,6 +91,13 @@ try:
 except Exception:
     HAVE_DEPTH = False
 
+# The dual-anode (DAXPES) tab, same optional packages.
+try:
+    from daxpes_tab import DaxpesTab
+    HAVE_DAXPES = HAVE_PLOT
+except Exception:
+    HAVE_DAXPES = False
+
 
 # ---------------------------------------------------------------------------
 # Reference data
@@ -705,11 +712,13 @@ class App(tk.Tk):
         self.thick_tab = ttk.Frame(nb)
         self.arxps_tab = ttk.Frame(nb)
         self.depth_tab = ttk.Frame(nb)
+        self.daxpes_tab = ttk.Frame(nb)
         self.help_tab = ttk.Frame(nb)
         nb.add(self.calc_tab, text="Calculator & simulation")
         nb.add(self.thick_tab, text="Thickogram (different core levels)")
         nb.add(self.arxps_tab, text="ARXPS (tilt series)")
         nb.add(self.depth_tab, text="Depth profile (ARXPS)")
+        nb.add(self.daxpes_tab, text="DAXPES (two X-ray sources)")
         nb.add(self.help_tab, text="Method / References")
 
         self.history = []  # list of dict rows for CSV export
@@ -720,6 +729,7 @@ class App(tk.Tk):
         self._build_thickogram_tab()
         self._build_arxps_tab()
         self._build_depth_tab()
+        self._build_daxpes_tab()
         self._build_help_tab()
         self.after(150, self._place_sash)
 
@@ -1291,6 +1301,17 @@ class App(tk.Tk):
 
         self.depth = DepthTab(self.depth_tab, self, lam_default, compact=self.compact)
         self.depth.pack(fill="both", expand=True, padx=8)
+
+    def _build_daxpes_tab(self):
+        """Thickness and coverage from one core level measured with a soft and a hard X-ray source. Needs numpy + matplotlib."""
+        if not HAVE_DAXPES:
+            ttk.Label(self.daxpes_tab, justify="left", padding=20,
+                      text="The DAXPES tab needs numpy and matplotlib:\n\n"
+                           "    pip install numpy matplotlib\n\n"
+                           "then restart the app. The Calculator tab works without them.").pack(anchor="nw")
+            return
+        self.daxpes = DaxpesTab(self.daxpes_tab, self, tpp2m_imfp_nm, compact=self.compact)
+        self.daxpes.pack(fill="both", expand=True, padx=8)
 
     def _build_help_tab(self):
         """The documentation tab. The rich viewer (docs/*.md with typeset equations) is built the first time the tab

@@ -77,8 +77,20 @@ only where they were checked against the paper itself or a bibliographic record.
     challenging structures as studied by ARXPS, *Surf. Interface Anal.* **49**, 1309-1315 (2017).
     DOI [10.1002/sia.6270](https://doi.org/10.1002/sia.6270). An RDP worked example (gallium-indium eutectic and its oxide).
 
+24. B. J. Murdoch, Quantitative analysis using dual anode X-ray photoelectron spectroscopy, *Surf. Interface Anal.* **58**,
+    125-137 (2026). DOI [10.1002/sia.70039](https://doi.org/10.1002/sia.70039). The peak-area method of the DAXPES tab.
+
+25. B. J. Murdoch, P. Y. Le, J. G. Partridge and D. G. McCulloch, Quantitative depth-dependent analysis using the inelastic
+    scattering backgrounds from X-ray photoelectron spectroscopy and hard X-ray photoelectron spectroscopy, *Surf. Interface
+    Anal.* **55**, 373-382 (2023). DOI [10.1002/sia.7206](https://doi.org/10.1002/sia.7206). The background-based thickness
+    that the DAXPES background method builds on (not yet in the Suite).
+
+26. M. P. Seah, Simple universal curve for the energy-dependent electron attenuation length for all materials, *Surf.
+    Interface Anal.* **44**, 1353-1359 (2012). DOI [10.1002/sia.5033](https://doi.org/10.1002/sia.5033). The attenuation-length
+    starting values of the DAXPES tab (Eq. 11, "S3").
+
 ## Citing
 
 If you use the Topofactor correction in published work, please cite the paper by Shard and co-workers [4] and the
 Thickogram paper by Cumpson [3]. For the Strohmeier calculator cite [1], and for the Cu presets [5]. For the
-angle-resolved analysis see [12] and [14]; for fits taken from CasaXPS see [17]; for the Profile (Murdoch) panel cite [20]; for the Relative depth page cite [22] and [23].
+angle-resolved analysis see [12] and [14]; for fits taken from CasaXPS see [17]; for the Profile (Murdoch) panel cite [20]; for the Relative depth page cite [22] and [23]; for the DAXPES tab cite [24] and, for its attenuation lengths, [26].

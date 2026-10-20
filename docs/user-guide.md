@@ -5,7 +5,7 @@ contamination films) from XPS peak areas. It has one window with a tab for each 
 
 Contents: [Starting the app](#starting-the-app), [The Calculator tab](#the-calculator-tab),
 [The Thickogram tab](#the-thickogram-tab), [The ARXPS tab](#the-arxps-tab),
-[The Depth profile tab](#the-depth-profile-tab),
+[The Depth profile tab](#the-depth-profile-tab), [The DAXPES tab](#the-daxpes-tab),
 [Which tab should I use?](#which-tab-should-i-use), [Troubleshooting](#troubleshooting).
 
 ## Starting the app
@@ -370,6 +370,30 @@ whose thicknesses vary by 50 percent, which is how much the answer depends on wh
 position and width at half maximum; a note says when the minimiser did not converge, or when there are far more slabs than
 data (the profile is then set by the regularisation and the guess). Treat narrow features as unresolved.
 
+## The DAXPES tab
+
+Use this when a film may not cover the whole analysed area (islands, patterned oxide, a wafer with a partly grown layer) and
+the instrument has two X-ray sources, a soft one (Al Kα) and a hard one (Ag Lα or Ga Kα). It measures **one core level with each
+source** and gives the film **thickness**, which does not depend on the coverage, and the **coverage** itself [24].
+
+1. Open four spectra with the buttons on the Data card: the film with the soft source, the film with the hard source, and a
+   thick reference of the same material with each source. A file can hold both the film and the reference regions: open it for
+   both slots and pick the region in the box next to the button. The photon energies are read from the files.
+2. Press *Auto window* (or type the window) and, if you like, tick *Follow small energy shifts*. One binding-energy window is used
+   for all four spectra, with a Shirley background.
+3. Set the attenuation lengths, soft and hard (the hard one must be longer). *Fill λ* gives a starting estimate for TiO2,
+   Ga2O3, SnO2, SiO2 or Si, from Seah's universal curve (the default) or from TPP-2M times the AL/IMFP factor; for any other
+   material type the two lengths in.
+4. Press *Calculate & plot*. The readout is the DAXPES thickness; the badge and the details give the coverage, the thickness a
+   single source alone would report, how far the thickness and coverage move if the attenuation lengths are 10 % off (the
+   ratio of the two lengths matters most), and warnings. The left plot shows each source against thickness with your measured values;
+   the right one shows the ratio of the two sources, whose value fixes the thickness whatever the coverage.
+
+You can type any area (the boxes at the bottom of the card override the files), and if you have no reference spectra you can
+type the ratio of the thick-reference areas, hard over soft: you then get the thickness but no coverage. The sample pair
+`docs/sample/daxpes-tio2-al-ka.vms` and `daxpes-tio2-ag-la.vms` (synthetic: 3 nm covering 60 %, with a reference region in each
+file) gives about 3.0 nm and 60 % with λ = 1.87 and 3.77 nm. Both sources must analyse the **same area** of the sample.
+
 ## Which tab should I use?
 
 | Your situation | Use |
@@ -379,6 +403,7 @@ data (the profile is then set by the regularisation and the guess). Treat narrow
 | Coating on a micro-scale fibre or particle | Thickogram tab with a Topofactor |
 | A tilt series (several emission angles) in a VAMAS file | ARXPS tab |
 | Where several species sit in depth, from a tilt series | Depth profile tab |
+| A film that may cover only part of the area, on an instrument with a soft and a hard X-ray source | DAXPES tab |
 | Nanoparticles or nanofibres | Neither: the Topofactor model is not valid at this scale |
 
 For equal kinetic energies the Thickogram reduces exactly to the Strohmeier equation, so the two tabs agree where

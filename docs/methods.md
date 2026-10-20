@@ -5,7 +5,7 @@ square brackets, such as [3], refer to the [reference list](references.md#refere
 
 Contents: [Overview](#overview), [Strohmeier equation](#strohmeier-equation-calculator-tab),
 [Thickogram](#thickogram-thickogram-tab), [Topofactors](#topofactors-fibres-and-particles),
-[Angle-resolved XPS](#angle-resolved-xps-arxps-tab), [Depth profiles](#depth-profiles-depth-profile-tab),
+[Angle-resolved XPS](#angle-resolved-xps-arxps-tab), [Depth profiles](#depth-profiles-depth-profile-tab), [Dual-anode XPS](#dual-anode-xps-daxpes-tab),
 [Spectrum simulation](#spectrum-simulation),
 [IMFPs from TPP-2M](#imfps-from-tpp-2m).
 
@@ -21,6 +21,7 @@ overlayer and substrate signals separable by peak fitting. They differ in which 
 | Topofactor (Thickogram tab) | Correction applied to the Thickogram result | Sample shape | Fibres and particles much larger than the attenuation length |
 | Depth profile (Depth profile tab) | Several species followed against emission angle | Attenuation lengths, a tilt series | Flat samples, angles up to about 70 degrees |
 | ARXPS (ARXPS tab) | The same signals as above, measured at several emission angles from a VAMAS tilt series | Presets or RSFs, lambda, a tilt series | Flat samples, emission angles up to about 70 degrees |
+| DAXPES (DAXPES tab) | One core level measured with a soft and a hard X-ray source, film and thick reference | Two attenuation lengths, a reference for each source | Films that may cover only part of the area; the same analysed area for both sources |
 
 ## Strohmeier equation (Calculator tab)
 
@@ -670,6 +671,67 @@ The simple exponential model is reliable up to emission angles of about 60 to 70
 roughness and surface contamination matter (the *Max angle* setting leaves those angles out of fits), and a crystalline
 substrate adds photoelectron diffraction that changes the intensities with polar and azimuthal angle. The analysis assumes
 flat, uniform samples.
+
+## Dual-anode XPS (DAXPES tab)
+
+A single X-ray source cannot tell a thin film that covers the whole analysed area from a thicker one that covers only part of
+it: both lower the film signal. Murdoch [24] separates the two by measuring the **same core level with a soft and a hard
+source** (for example Al Kα, 1486.7 eV, and Ag Lα, 2984.3 eV, or Ga Kα, 9.25 keV). The hard-source electrons have a longer
+attenuation length, so the film is seen through a different fraction of its thickness. For a film of thickness $d$ covering a
+fraction $c$ of the analysed area, with $I_\infty$ the area of a thick reference of the same material measured with the same
+source, each source gives
+
+```math
+\frac{I}{I_\infty} = c\left(1-e^{-d/(\lambda\cos\theta)}\right)\qquad\Longleftrightarrow\qquad
+t = -\lambda\cos\theta\,\ln\left(1-\frac{I}{I_\infty}\right)\quad(c=1)
+```
+
+where $\lambda$ is the attenuation length of the electrons of that source, $\theta$ is the take-off angle from the surface normal
+and $t$ is the thickness a single source would report if the film were complete. The coverage $c$ is a common factor, so it
+cancels in the ratio of the two sources (X = soft, H = hard), which fixes the thickness on its own [24]:
+
+```math
+\frac{I_H/I_{\infty,H}}{I_X/I_{\infty,X}} = \frac{1-e^{-d/(\lambda_H\cos\theta)}}{1-e^{-d/(\lambda_X\cos\theta)}},
+\qquad c = \frac{I_X/I_{\infty,X}}{1-e^{-d/(\lambda_X\cos\theta)}}
+```
+
+The ratio on the left rises monotonically from $\lambda_X/\lambda_H$ for a vanishingly thin film to 1 for a film thicker than the
+soft source can see, so the method is sensitive only in between, and the tab solves the equation for $d$ by bisection and
+refuses a ratio outside that range, saying why. The coverage is what the single-source areas leave over; the paper also gives
+it as the ratio of the hard-source single-source thickness to the DAXPES thickness (the tab shows both, and they agree for thin
+films). Only the ratio $I_{\infty,H}/I_{\infty,X}$ is needed for the thickness: it can be measured on a thick reference of the
+same material with both sources or typed in, but without a reference for each source there is no coverage.
+
+Assumptions and limits, from the paper. Both sources must see **the same analysed area**, which is easy on an instrument that
+defines the area by an aperture or by imaging, and not otherwise (an analysis area set by the X-ray spot changes with the
+source, and then the single-source areas are not comparable). The thickness cannot exceed about $3\lambda_H\cos\theta$, the
+elastic-scattering limit of the hard-source electrons, and above about $3\lambda_X\cos\theta$ the soft source is saturated and
+the ratio is close to 1, so the answer rests on a small difference; very thin films are difficult for the opposite reason, because
+the sources differ little. The attenuation lengths matter, and the tab offers two starting points (use values you trust, because the thickness scales
+with them). The default is Seah's universal curve [26], which needs only the kinetic energy $E$ of the electrons (hard-source
+electrons are faster, so $\lambda_H > \lambda_X$), the mean atomic number $Z$ of the film, the mean atomic size $a$ and a small
+term $W$ for strongly bonded compounds:
+
+```math
+\lambda = \frac{5.8 + 0.0041\,Z^{1.7} + 0.088\,E^{0.93}}{Z^{0.38}\,(1-W)}\,a^{1.82}\ \mathrm{nm},\qquad
+a^{3} = \frac{10^{21}M}{\rho N_A (g+h)}\ \mathrm{nm}^3
+```
+
+with $M$, $\rho$ and $g+h$ the molar mass, density and atoms per formula unit, $W = 0.06H$ with $H$ the heat of formation in eV per
+atom (0 for an element) and $E$ in eV; it agrees with attenuation lengths computed from optical data to an RMS of 8 % between
+100 eV and 30 keV for emission up to 65 degrees [26]. The other is the TPP-2M IMFP times an AL/IMFP factor (0.9 by default). The
+densities, compositions and heats of formation of the few built-in films (TiO$_2$, Ga$_2$O$_3$, SnO$_2$, SiO$_2$, Si) are handbook
+values, not from the papers. Because the answer rests on the ratio of the two sources, an error in the *ratio* $\lambda_H/\lambda_X$ moves the thickness
+and the coverage far more than an error in both lengths together (which scales $d$ by the same factor and leaves the coverage
+unchanged), so the details box lists the thickness and coverage for $\lambda_H$ alone and for both lengths changed by $\pm 10$ %;
+for the synthetic example a 10 % change of $\lambda_H$ alone moves 3.0 nm to 2.1-3.7 nm and the coverage from 70 % to 55 %,
+while changing both by 10 % gives 2.7-3.3 nm and the same 60 %. Against the lengths in Murdoch's Table 1 the Seah curve is 18 % below to 6 % above, and
+TPP-2M times 0.9 within 15 %, which is the scatter to expect from either; for another material, type the lengths in. The peak areas come from the same windows and
+Shirley background as the ARXPS tab, with one window in binding energy for all four spectra; they may also be typed in.
+
+Not implemented yet: the paper's second method, which needs no reference sample because it uses the ratio of the inelastic
+background intensities measured with the two sources instead of the peak areas, and which is the same idea as the
+background-based thickness of Murdoch and co-workers [25].
 
 ## Spectrum simulation
 

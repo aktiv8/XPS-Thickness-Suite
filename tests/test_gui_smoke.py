@@ -43,13 +43,13 @@ def _make_app(testcase):
 
 @unittest.skipUnless(HAVE_DISPLAY and TT is not None, "needs a display and numpy + matplotlib")
 class ThickogramTabSmoke(unittest.TestCase):
-    def test_window_has_the_five_tabs_and_the_suite_title(self):
+    def test_window_has_the_six_tabs_and_the_suite_title(self):
         app = _make_app(self)
         self.assertEqual(app.title(), "XPS Thickness Suite")
         nb = app.nametowidget(app.calc_tab.winfo_parent())
         self.assertEqual([nb.tab(i, "text") for i in range(nb.index("end"))],
                          ["Calculator & simulation", "Thickogram (different core levels)", "ARXPS (tilt series)",
-                          "Depth profile (ARXPS)", "Method / References"])
+                          "Depth profile (ARXPS)", "DAXPES (two X-ray sources)", "Method / References"])
 
     def test_example_reproduces_the_library_result(self):
         app = _make_app(self)
@@ -821,6 +821,103 @@ class WithoutPlottingPackages(unittest.TestCase):
             app.theta_var.set("90")
             app._on_calculate()
             self.assertAlmostEqual(app.last_calc["res"]["d_nm"], 3.577, places=2)
+
+
+@unittest.skipUnless(HAVE_DISPLAY and TT is not None, "needs a display and numpy + matplotlib")
+class DaxpesTabSmoke(unittest.TestCase):
+    D, COV = 3.0, 0.6
+
+    def _files(self, **kwargs):
+        import tempfile
+        import synthetic as SY
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        soft, hard = os.path.join(d, "soft.vms"), os.path.join(d, "hard.vms")
+        SY.write_daxpes_samples(soft, hard, d_nm=self.D, cov=self.COV, **kwargs)
+        return soft, hard
+
+    def _tab(self):
+        app = _make_app(self)
+        tab = app.daxpes
+        soft, hard = self._files()
+        for key, path, region in (("samp_soft", soft, "Ti 2p film"), ("ref_soft", soft, "Ti 2p reference"),
+                                  ("samp_hard", hard, "Ti 2p film"), ("ref_hard", hard, "Ti 2p reference")):
+            self.assertTrue(tab.load_file(key, path, region))
+        tab.v["lam_soft"].set("1.87")
+        tab.v["lam_hard"].set("3.77")
+        return app, tab
+
+    def test_the_synthetic_pair_gives_the_thickness_and_the_coverage_it_was_made_with(self):
+        app, tab = self._tab()
+        tab.calculate()
+        res = tab.result[0]
+        self.assertAlmostEqual(res.d_nm, self.D, delta=0.15)
+        self.assertAlmostEqual(res.coverage, self.COV, delta=0.03)
+        self.assertEqual(tab.readout_var.get(), f"{res.d_nm:.2f} nm")
+        self.assertIn("coverage", tab.readout_sub_var.get())
+        self.assertEqual(len(tab.figs["result"][0].axes), 2)
+        self.assertEqual(len(tab.figs["spectra"][0].axes), 4)
+        text = tab.details.get("1.0", "end")
+        self.assertIn("λ_hard ±10 %", text)
+        self.assertIn("both λ ±10 %", text)
+        self.assertEqual(tab.slots["samp_hard"].file.blocks[0].hv_ev, 2984.3)
+        self.assertEqual(float(tab.v["hv_hard"].get()), 2984.3)
+
+    def test_typed_areas_override_the_files_and_the_reference_ratio_is_enough_for_the_thickness(self):
+        import daxpes as DX
+        app, tab = self._tab()
+        rx, rh = DX.forward_ratios(2.0, 0.5, 1.87, 3.77, 0.0)
+        tab.v["i_soft"].set(f"{rx * 1000:.6g}")
+        tab.v["i_hard"].set(f"{rh * 400:.6g}")
+        tab.v["inf_soft"].set("1000")
+        tab.v["inf_hard"].set("400")
+        tab.calculate()
+        self.assertAlmostEqual(tab.result[0].d_nm, 2.0, places=3)
+        self.assertAlmostEqual(tab.result[0].coverage, 0.5, places=3)
+        tab.v["inf_soft"].set("")
+        tab.v["inf_hard"].set("")
+        tab.v["i_soft"].set(f"{rx * 1000:.6g}")                 # a typed ratio overrides the reference spectra
+        tab.v["i_hard"].set(f"{rh * 1000 * 0.4:.6g}")
+        tab.v["rho"].set("0.4")
+        tab.calculate()
+        self.assertAlmostEqual(tab.result[0].d_nm, 2.0, places=3)
+        self.assertIsNone(tab.result[0].coverage)
+
+    def test_the_tpp2m_helper_fills_a_longer_length_for_the_hard_source(self):
+        app, tab = self._tab()
+        tab.v["lam_soft"].set("")
+        tab.v["lam_hard"].set("")
+        import daxpes_tab as DXT
+        tab.v["be"].set("458.8")
+        self.assertEqual(tab.al_method.get(), DXT.AL_SEAH)               # the default is Seah's universal curve
+        tab.fill_lambdas()
+        lam_s, lam_h = float(tab.v["lam_soft"].get()), float(tab.v["lam_hard"].get())
+        self.assertGreater(lam_h, lam_s)
+        self.assertAlmostEqual(lam_s, 1.83, delta=0.05)
+        tab.al_method.set(DXT.AL_TPP)
+        tab.v["factor"].set("0.9")
+        tab.fill_lambdas()
+        self.assertAlmostEqual(float(tab.v["lam_soft"].get()), 0.9 * 2.16, delta=0.05)
+
+    def test_missing_inputs_raise_clear_errors_and_the_tab_keeps_working(self):
+        from unittest import mock
+        app, tab = self._tab()
+        tab.v["lam_hard"].set("1.0")                      # shorter than the soft one
+        with mock.patch("daxpes_tab.messagebox.showerror") as err:
+            tab.calculate()
+        self.assertTrue(err.called)
+        self.assertIn("longer attenuation length", err.call_args[0][1])
+        self.assertIsNone(tab.result)
+        tab.v["lam_hard"].set("3.77")
+        tab.slots["ref_soft"].region.set("(none)")
+        with mock.patch("daxpes_tab.messagebox.showerror") as err:
+            tab.calculate()
+        self.assertIn("thick-reference", err.call_args[0][1])
+
+    def test_an_empty_tab_shows_a_prompt(self):
+        app = _make_app(self)
+        self.assertIsNone(app.daxpes.result)
+        self.assertEqual(app.daxpes.readout_var.get(), "-.-- nm")
 
 
 if __name__ == "__main__":

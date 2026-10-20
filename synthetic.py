@@ -164,3 +164,45 @@ def write_sample(path: str, fitted: bool = False, **kwargs) -> None:
     what = "with a CasaXPS-style fit" if fitted else "without a fit"
     VM.write(path, blocks, comment=f"Synthetic Si 2p tilt series (Si + SiO2) {what}, not a measurement. "
                                    "Made by synthetic.py.")
+
+
+# Dual-anode XPS: one core level measured with a soft (Al Ka) and a hard (Ag La) source, on a patchy film and on a thick
+# reference of the same material. Peak areas follow  I = cov I_inf (1 - exp(-d / (lam cos theta)))  per source.
+DAXPES_SOURCES = (("Al Ka", 1486.68), ("Ag La", 2984.3))
+DAXPES_REGIONS = ("Ti 2p film", "Ti 2p reference")
+
+
+def daxpes_pair(d_nm: float = 3.0, cov: float = 0.6, lam_soft: float = 1.87, lam_hard: float = 3.77,
+                theta: float = 0.0, iinf_soft: float = 20000.0, iinf_hard: float = 6000.0, centre: float = 458.8,
+                fwhm: float = 1.2, noise: bool = False, seed: int = 1, step: float = 0.1) -> dict:
+    """
+    {"soft": [film block, reference block], "hard": [...]} for one core level (Ti 2p3/2-like) with a film of thickness
+    `d_nm` covering a fraction `cov` of the analysed area, measured at take-off angle `theta` (from the normal) with each
+    source. `iinf_*` are the reference areas (counts per second x eV) of each source: the two differ because flux and
+    cross-section do, which is why each source needs its own reference (or their ratio).
+    """
+    rng = np.random.default_rng(seed)
+    c = math.cos(math.radians(theta))
+    out = {}
+    for key, (label, hv), lam, iinf in (("soft", DAXPES_SOURCES[0], lam_soft, iinf_soft),
+                                        ("hard", DAXPES_SOURCES[1], lam_hard, iinf_hard)):
+        be = np.arange(centre - 8.0, centre + 8.0 + step / 2, step)
+        blocks = []
+        for region, area in ((DAXPES_REGIONS[0], cov * iinf * (1.0 - math.exp(-d_nm / (lam * c)))),
+                             (DAXPES_REGIONS[1], iinf)):
+            sig = area * sim.pseudo_voigt(be, centre, fwhm, 0.0)
+            bg = sim.shirley_background(sig, step=0.05 * area, base=0.02 * iinf / 10.0)
+            blk = _block(region, "Ti 2p", hv, be, sig + bg, theta, None, noise, rng)
+            blk.sample_id = f"synthetic {label}"
+            blocks.append(blk)
+        out[key] = blocks
+    return out
+
+
+def write_daxpes_samples(soft_path: str, hard_path: str, **kwargs) -> None:
+    """The docs DAXPES sample files: one VAMAS file per source, each with the film and the thick-reference region."""
+    pair = daxpes_pair(noise=True, **kwargs)
+    note = ("Synthetic dual-anode XPS (Ti 2p, a patchy film and a thick reference) measured with {}, not a measurement. "
+            "Made by synthetic.py.")
+    VM.write(soft_path, pair["soft"], comment=note.format("Al Ka"))
+    VM.write(hard_path, pair["hard"], comment=note.format("Ag La"))
