@@ -1389,6 +1389,11 @@ class DepthTab(ttk.Frame):
             ck.pack(side="left", padx=(0, 6))
             Tooltip(ck, tip)
         for text, cmd, tip in (("Run MEM", self._mem_run, "Maximise Q = αS - C/2 from the start model below."),
+                               ("Auto start", self._mem_auto_start, "The paper's simulator, automated: search the layer "
+                                "thicknesses and compositions (for the number of layers set below) whose apparent concentrations "
+                                "fit the data best, and put them in the start model."),
+                               ("Run protocol", self._mem_protocol, "The paper's cycle: pseudo-Gaussian components (depths free "
+                                "within ±0.6 nm), then free layers, repeated until the profile changes by less than 1 %."),
                                ("Start-model ensemble", self._mem_ensemble, "Repeat from 8 start models whose layer thicknesses "
                                 "vary by ±30 % and show the mean and spread."),
                                ("Reset start model", self._mem_reset_start, "Rebuild the start model from the Stratification "
@@ -1603,8 +1608,52 @@ class DepthTab(ttk.Frame):
         warn = MM.g1_range_warning(ke) if self.mem_model.get() == MEM_IMFP_G1 else None
         cyc = "; ".join(f"α {c['alpha']:g}: χ²/N {c['chi2_per_point']:.2f}" for c in f.cycles)
         ifc = ", ".join(f"{d:.2f} nm ({a} → {b})" for d, a, b in f.interfaces()[:5])
-        self.mem_note.set(f"Cycles: {cyc}. " + (f"Interfaces at {ifc}. " if ifc else "") + " ".join(f.notes) +
+        self.mem_note.set(f"Cycles: {cyc}. " + (f"Interfaces at {ifc}. " if ifc else "") +
+                          f"Minimum depth {MM.minimum_depth_nm(f):.1f} nm. " + " ".join(f.notes) +
                           (" " + warn if warn else ""))
+        self._draw_mem()
+
+    def _mem_auto_start(self):
+        try:
+            names, angles, x, lam, ke, mats, thick, comps, st = self._mem_collect()
+            n_layers = len(self.mem_layer_rows)
+            self.mem_note.set("Searching the start model (about a minute)…")
+            self.update_idletasks()
+            th, comp, _, chi2 = MM.simulate_start(names, angles, x, lam, n_layers=n_layers, sigma=st["rel"],
+                                                  depth_nm=st["depth"], dz_nm=st["dz"], initial_thickness_nm=thick)
+        except ValueError as exc:
+            self.mem_note.set(str(exc))
+            return
+        for r, row in enumerate(self.mem_layer_rows):
+            if r < len(th):
+                row["thick"].set(f"{th[r]:.2f}")
+            for j, var in enumerate(row["comps"]):
+                var.set(f"{100 * comp[r, j]:.0f}")
+        self.mem_note.set(f"Start model found: layer thicknesses {', '.join(f'{t:.2f}' for t in th)} nm on a bulk, χ²/N "
+                          f"{chi2 / x.size:.2f} (own attenuation lengths). Check it, then press Run protocol or Run MEM.")
+
+    def _mem_protocol(self):
+        try:
+            names, angles, x, lam, ke, mats, thick, comps, st = self._mem_collect()
+            z = MM.depths(int(round(st["depth"] / st["dz"])), st["dz"])
+            start = MM.layered_model(thick, comps, z, floor=0.01)
+            kw = self._mem_args(names, ke, mats, st, lam)
+            fit_kw = dict(free_depth_nm=kw.pop("free_depth_nm"), target_chi2_per_point=kw.pop("target_chi2_per_point"))
+            alphas = kw.pop("alphas")
+            self.mem_note.set("Running the protocol (a minute or two)…")
+            self.update_idletasks()
+            res = MM.run_protocol(names, angles, x, lam, start, alphas=alphas, fit_kwargs=fit_kw, **kw)
+        except ValueError as exc:
+            self.mem_note.set(str(exc))
+            return
+        self.mem_fit, self.mem_ens = res.fit, None
+        f = res.fit
+        hist = "; ".join(f"cycle {int(h['cycle'])}: χ²/N {h['chi2_v2']:.2f} → {h['chi2_v1']:.2f}, change {100 * h['change']:.1f} %"
+                         for h in res.history)
+        ifc = ", ".join(f"{d:.2f} nm ({a} → {b})" for d, a, b in f.interfaces()[:5])
+        self.mem_note.set(f"Protocol (pseudo-Gaussian → free layers): {hist}. " + ("Converged (< 1 %). " if res.converged else "") +
+                          (f"Interfaces at {ifc}. " if ifc else "") + f"Minimum depth {MM.minimum_depth_nm(f):.1f} nm. " +
+                          " ".join(f.notes))
         self._draw_mem()
 
     def _mem_ensemble(self):

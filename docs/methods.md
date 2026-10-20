@@ -712,7 +712,7 @@ to the electron energy as $E^{0.75}$.
 **The starting profile is the prior.** The paper stresses that the reconstruction is only as good as the starting profile (the
 version of its algorithm with free layers failed from a flat start on structures with seven or eight components). Its protocol
 finds the start model with a simulator and refines it with a four-parameter pseudo-Gaussian version of the algorithm before
-the free-layer version used here; this page implements the free-layer version only, with the start model entered as a table of
+the free-layer version; the page implements all three (below). The start model is entered as a table of
 layers (thickness and composition in %, the last row being the bulk, by default one species per layer in the order of the
 Stratification depths) and used as the entropy prior $m$. Layers below the *Free to* depth are held at the bulk composition,
 as in the paper's constrained bulk. On the paper's synthetic structures (7 angles from 0 to 60 degrees, which the text does not
@@ -723,6 +723,27 @@ two thicker ones is at the limit of what the fit resolves. From a start 30 % off
 the data, which the start-model ensemble (mean and spread over 8 starts) makes visible. The page also draws the paper's relative
 depth plot, the ratio of the model's apparent concentration at the largest angle to that at the smallest, and reports each species'
 curve area (nm of that species), peak depth and the interfaces where the dominant species changes.
+
+**The paper's protocol (Auto start, Run protocol).** (1) *Simulator.* The structure of $L-1$ layers of unknown thickness on a bulk,
+each with a composition, whose apparent concentrations are closest to the data, each species keeping its own attenuation length.
+For fixed thicknesses the intensity of species $j$ at angle $\theta$ is linear in the layer compositions,
+$r_{jk} = \sum_l c_{lj}\,(e^{-a_l/\lambda_j\cos\theta_k} - e^{-b_l/\lambda_j\cos\theta_k})$ with the layer from depth $a_l$ to $b_l$
+($b = \infty$ for the bulk), so the compositions are found exactly for each set of thicknesses (softmax L-BFGS minimising $\chi^2$) and
+a bounded Nelder-Mead simplex searches the $L-1$ thicknesses, started from the thicknesses typed in the table and from equal layers
+of 0.7 and 1.5 nm. The paper does this search by hand. (2) *Version 2.* The profile is a sum of components, one per run of each
+species in the start model, each a flat top between a start and an end depth with Gaussian edges,
+$f(z) = \frac{h}{2}\left[\mathrm{erf}\frac{z-z_1}{\sqrt{2}\,w} - \mathrm{erf}\frac{z-z_2}{\sqrt{2}\,w}\right]$, with four parameters $z_1, z_2, h, w$
+(the paper names "four-parameter pseudo-Gaussian" components but gives no formula, so this is my definition); the atomic fractions are
+$f_j/\sum_l f_l$ and $\chi^2$ is minimised over the parameters alone. The depths may move by 0.6 nm from the start model (the paper's
+6 angstrom); a depth that ends at that limit is re-centred and the fit repeated, so a start that is further off can still be
+corrected. Species absent from the start model stay absent. (3) *Cycle.* Version 2 reshapes the start model, the free-layer fit
+above uses that as start and prior, and the pair is repeated until the profile (the mean absolute change of the atomic fractions)
+changes by less than 1 % between cycles (at most 6). The *minimum depth* printed after a run is the shallowest depth below which
+replacing the profile by the composition of its deepest layer changes no apparent concentration by more than 1 %: the data cannot
+distinguish what lies deeper. On the paper's structures with ±10 % random error, the simulator needs no start guess and
+finds layer thicknesses within about 35 % (structure 8: 0.69, 1.03, 0.78 nm against 0.7, 1.2, 1.2; the thinnest or deepest layer is the least certain) and the protocol converges
+in one to three cycles, but it does not solve the ambiguity between species of similar attenuation length in one layer (A and B in
+structure 4_2+2 with noise); and, as the paper says, the number of layers must be chosen, which the page leaves to you.
 
 ### Attenuation lengths and the range of validity
 

@@ -34,9 +34,10 @@ stands for material m and is scaled to the energy of species j's electrons as (K
 has the composition-weighted mean of those lengths and lambda[j, i] is the mean over layers 0..i. NIST warns that G-1 can be off
 by up to about 50 % for some materials and that TPP-2M is generally more reliable; G-1 is used because the paper uses it.
 
-The paper's protocol (a simulator for the starting profile, a four-parameter pseudo-Gaussian version of the algorithm, then this
-free-layer version) is only partly implemented: the starting profile is a layered model the caller supplies, which is also the
-entropy prior m.
+The paper's protocol is implemented in the last section of this file: `simulate_start` (the "simulator": a search for the layered
+start model against the ACD), `fit_components` ("version 2": four-parameter flat-topped components with Gaussian edges, depths
+free within +-0.6 nm), `run_protocol` (version 2, then the free-layer version above, repeated until the profile changes by less
+than 1 %) and `minimum_depth_nm` (the minimum-depth test). The start model of `fit_mem` is the entropy prior m.
 """
 import math
 from dataclasses import dataclass, field
@@ -44,6 +45,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+import depthlayers as DL
 import depthmurdoch as DM
 
 DEFAULT_ALPHAS = (100.0, 30.0, 10.0, 3.0, 1.0)
@@ -210,6 +212,7 @@ class MemFit:
     converged: bool
     cycles: List[Dict[str, float]] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    components: Optional[list] = None      # the components of a version-2 fit (None for a free-layer fit)
 
     @property
     def dz_nm(self) -> float:
@@ -510,3 +513,329 @@ PAPER_STRUCTURES: Dict[str, dict] = {
               compositions=((0, 0.8, 0, 0, 0, 0, 0, 0.2), (0, 0, 0, 0.23, 0, 0.15, 0.62, 0),
                             (0.4, 0, 0.36, 0, 0.24, 0, 0, 0), (0, 0, 0.82, 0, 0.18, 0, 0, 0))),
 }
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Phase 2: the paper's protocol (simulator, pseudo-Gaussian "version 2", cycles, minimum depth)
+# ---------------------------------------------------------------------------------------------------------------
+
+DEPTH_WINDOW_NM = 0.6                # the paper lets the component depths move by +-6 angstrom around the start model
+EDGE_RANGE_NM = (0.05, 1.0)          # allowed edge widths (Gaussian sigma) of a component
+CYCLE_TOL = 0.01                     # the protocol stops when the profile changes by less than 1 % between cycles
+MAX_CYCLES = 6
+_BOTTOM = 1.0e3                      # "end" of a component that runs to the bulk
+
+
+def _erf(x: np.ndarray) -> np.ndarray:
+    """erf by Abramowitz and Stegun 7.1.26 (absolute error below 1.5e-7), so that no scipy is needed."""
+    sign = np.sign(x)
+    ax = np.abs(x)
+    t = 1.0 / (1.0 + 0.3275911 * ax)
+    poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))))
+    return sign * (1.0 - poly * np.exp(-ax * ax))
+
+
+@dataclass
+class Component:
+    """One four-parameter component of species `species`: a flat top of height `amp` between `start` and `end` (nm) whose two
+    edges are Gaussian error functions of width `width` (the paper's pseudo-Gaussian, defined here since the paper gives no formula)."""
+    species: int
+    start: float
+    end: float
+    amp: float
+    width: float
+
+    def values(self, z_nm: np.ndarray) -> np.ndarray:
+        r = 1.0 / (max(self.width, 1e-6) * math.sqrt(2.0))
+        return self.amp * 0.5 * (_erf((z_nm - self.start) * r) - _erf((z_nm - self.end) * r))
+
+    @property
+    def to_bottom(self) -> bool:
+        return self.end >= 0.5 * _BOTTOM
+
+
+def components_profile(comps: Sequence[Component], z_nm: np.ndarray, n_species: int, floor: float = 1e-4) -> np.ndarray:
+    """n[i, j]: the components of each species added, then normalised so that every layer sums to 1 (floor keeps it positive)."""
+    f = np.full((len(z_nm), n_species), floor)
+    for c in comps:
+        f[:, c.species] += c.values(z_nm)
+    return f / f.sum(axis=1, keepdims=True)
+
+
+def initial_components(start: np.ndarray, z_nm: np.ndarray, width_nm: float = 0.15, min_share: float = 0.05) -> List[Component]:
+    """Components from a start profile: for each species every run of layers where it exceeds half its maximum (species that
+    never reach `min_share` are left out: version 2 can only reshape what the start model contains)."""
+    dz = float(z_nm[1] - z_nm[0]) if len(z_nm) > 1 else 0.1
+    out: List[Component] = []
+    for j in range(start.shape[1]):
+        col = start[:, j]
+        top = float(col.max())
+        if top < min_share:
+            continue
+        on = col >= 0.5 * top
+        i = 0
+        while i < len(on):
+            if not on[i]:
+                i += 1
+                continue
+            k = i
+            while k + 1 < len(on) and on[k + 1]:
+                k += 1
+            lo = 0.0 if i == 0 else float(z_nm[i]) - 0.5 * dz
+            hi = _BOTTOM if k == len(on) - 1 else float(z_nm[k]) + 0.5 * dz
+            out.append(Component(j, lo, hi, float(col[i:k + 1].max()), width_nm))
+            i = k + 1
+    return out
+
+
+def _slots(comps: Sequence[Component]) -> List[Tuple[int, Optional[int], int, int]]:
+    """Parameter positions in u for each component: (start slot, end slot or None, amplitude slot, width slot)."""
+    out, p = [], 0
+    for c in comps:
+        a = p
+        p += 1
+        b = None
+        if not c.to_bottom:
+            b = p
+            p += 1
+        out.append((a, b, p, p + 1))
+        p += 2
+    return out
+
+
+def _decode(u: np.ndarray, base: Sequence[Component], window: float) -> List[Component]:
+    out = []
+    for c, (a, b, m, w) in zip(base, _slots(base)):
+        start = c.start + window * math.tanh(u[a])
+        end = _BOTTOM if b is None else c.end + window * math.tanh(u[b])
+        amp = c.amp * math.exp(min(max(u[m], -8.0), 8.0))
+        width = EDGE_RANGE_NM[0] + (EDGE_RANGE_NM[1] - EDGE_RANGE_NM[0]) / (1.0 + math.exp(-u[w]))
+        out.append(Component(c.species, start, end, amp, width))
+    return out
+
+
+def _encode_width(w: float) -> float:
+    lo, hi = EDGE_RANGE_NM
+    q = min(max((w - lo) / (hi - lo), 1e-3), 1 - 1e-3)
+    return math.log(q / (1.0 - q))
+
+
+def fit_components(names: Sequence[str], angles_deg: Sequence[float], x_meas: np.ndarray, lam_nm: Sequence[float],
+                   start: np.ndarray, sigma=DEFAULT_REL_SIGMA, ke_ev: Optional[Sequence[Optional[float]]] = None,
+                   iterate_imfp: bool = True, dz_nm: float = 0.1, window_nm: float = DEPTH_WINDOW_NM,
+                   relative_sigma: bool = True, max_iter: int = 300, lam_mat: Optional[np.ndarray] = None,
+                   components: Optional[Sequence[Component]] = None, rounds: int = 4) -> MemFit:
+    """
+    The paper's "version 2": the profile is a sum of four-parameter components (start depth, end depth, height, edge width), one
+    per run of each species in `start` (or the `components` given), normalised to 1 in every layer, and chi2 is minimised over
+    those parameters only (L-BFGS with numerical gradients). Each depth may move by `window_nm` (paper: 6 angstrom) from its
+    start value; a depth that ends at the limit of its window is re-centred there and the fit repeated, up to `rounds` times,
+    so a wrong start can still move further. The attenuation lengths follow the profile when `iterate_imfp` is set, as in
+    `fit_mem`. Returns a MemFit whose `components` hold the fitted components and whose `prior` is `start`.
+    """
+    names = list(names)
+    x_meas = np.asarray(x_meas, dtype=float)
+    angles = np.asarray(angles_deg, dtype=float)
+    start = np.asarray(start, dtype=float)
+    s = len(names)
+    if x_meas.shape != (s, len(angles)) or start.ndim != 2 or start.shape[1] != s:
+        raise ValueError("x_meas needs one row per species and one column per angle, start one column per species.")
+    if dz_nm <= 0 or window_nm <= 0:
+        raise ValueError("The layer thickness and the depth window must be positive.")
+    z = depths(len(start), dz_nm)
+    sig = np.maximum(sigma * x_meas, 0.002) if relative_sigma else np.asarray(sigma, dtype=float)
+    lam_own = np.asarray(lam_nm, dtype=float)
+    if lam_mat is None:
+        lam_mat = lambda_matrix(lam_own, ke_ev)
+    else:
+        lam_mat = np.asarray(lam_mat, dtype=float)
+        if lam_mat.shape != (s, s):
+            raise ValueError("lam_mat needs one row and one column per species.")
+        lam_own = np.diag(lam_mat).copy()
+    prior = np.maximum(start, PRIOR_FLOOR)
+    prior = prior / prior.sum(axis=1, keepdims=True)
+    comps = list(components) if components is not None else initial_components(prior, z)
+    if len({c.species for c in comps}) < 2:
+        raise ValueError("Version 2 needs a start model with at least two species present.")
+    notes: List[str] = []
+    c = components_profile(comps, z, s)
+    lam_ji = layer_lambda(c, lam_mat) if iterate_imfp else np.repeat(lam_own[:, None], len(z), axis=1)
+    ok_all, inner, total_iters = True, 0, 0
+    while True:
+        k = kernel(z, lam_ji, angles)
+        for _ in range(max(rounds, 1)):
+            base = comps
+
+            def chi2_of(u, base=base, kk=k):
+                x = apparent(components_profile(_decode(u, base, window_nm), z, s), kk)
+                e = (x - x_meas) / sig
+                return float(np.sum(e * e))
+
+            def fg(u):
+                g = np.empty_like(u)
+                for q in range(len(u)):
+                    d = np.zeros_like(u)
+                    d[q] = 1e-5
+                    g[q] = (chi2_of(u + d) - chi2_of(u - d)) / 2e-5
+                return chi2_of(u), g
+
+            slots = _slots(base)
+            u0 = np.zeros(slots[-1][3] + 1)
+            for cc, (_, _, _, w) in zip(base, slots):
+                u0[w] = _encode_width(cc.width)
+            u, f, iters, ok = DM.lbfgs(fg, u0, max_iter)
+            total_iters += iters
+            ok_all = ok_all and ok
+            comps = _decode(u, base, window_nm)
+            at_limit = any(abs(math.tanh(u[i])) > 0.97 for a, b, _, _ in slots for i in (a, b) if i is not None)
+            if not at_limit:
+                break
+        else:
+            notes.append("A component depth is still at the edge of its +-%.1f nm window: the start model may be too far off." %
+                         window_nm)
+        c = components_profile(comps, z, s)
+        inner += 1
+        if not iterate_imfp or inner >= MAX_IMFP_ITERATIONS:
+            break
+        new_lam = layer_lambda(c, lam_mat)
+        done = float(np.max(np.abs(new_lam - lam_ji) / lam_ji)) < LAMBDA_TOL
+        lam_ji = new_lam
+        if done:
+            break
+    x_calc = apparent(c, kernel(z, lam_ji, angles))
+    e = (x_calc - x_meas) / sig
+    chi2 = float(np.sum(e * e))
+    cycles = [dict(alpha=0.0, chi2=chi2, chi2_per_point=chi2 / x_meas.size, s=entropy(c, prior), iterations=float(total_iters),
+                   imfp_iterations=float(inner), converged=float(ok_all))]
+    if not ok_all:
+        notes.append("The minimiser stopped before converging: the components may not be at the best fit.")
+    return MemFit(names, z, c, prior, x_meas, x_calc, angles, lam_ji, lam_own, 0.0, chi2, entropy(c, prior), ok_all, cycles, notes,
+                  comps)
+
+
+def _layer_weights(thickness_nm: Sequence[float], lam_nm: np.ndarray, angles_deg: np.ndarray) -> np.ndarray:
+    """W[j, l, k] = exp(-a_l / (lam_j cos theta_k)) - exp(-b_l / (lam_j cos theta_k)): the share of a thick pure sample's
+    intensity that layer l (from depth a_l to b_l, the last one to infinity) supplies, for fixed lengths."""
+    edges = np.concatenate([[0.0], np.cumsum(thickness_nm)])
+    cos = np.cos(np.radians(angles_deg))
+    arg = lam_nm[:, None] * cos[None, :]
+    top = np.exp(-edges[None, :, None] / arg[:, None, :])
+    bottom = np.concatenate([top[:, 1:, :], np.zeros_like(top[:, :1, :])], axis=1)
+    return top - bottom
+
+
+def _best_compositions(w: np.ndarray, x_meas: np.ndarray, sig: np.ndarray, start: Optional[np.ndarray], max_iter: int = 200):
+    """Compositions c[l, j] (rows sum to 1) minimising chi2 for fixed layer weights w[j, l, k]; reuses MemProblem with alpha 0."""
+    s, n_layers, n_ang = w.shape
+    prob = MemProblem(w, x_meas, sig, 0.0, np.full((n_layers, s), 1.0 / s))
+    prob.inf = np.ones((s, n_ang))
+    v0 = np.log(np.full((n_layers, s), 1.0 / s) if start is None else np.maximum(start, 1e-3)).ravel()
+    v, f, _, _ = DM.lbfgs(prob.value_and_grad, v0, max_iter)
+    return prob.profile(v), 2.0 * f
+
+
+def simulate_start(names: Sequence[str], angles_deg: Sequence[float], x_meas: np.ndarray, lam_nm: Sequence[float],
+                   n_layers: int = 3, sigma=DEFAULT_REL_SIGMA, relative_sigma: bool = True, depth_nm: float = 15.0,
+                   dz_nm: float = 0.1, initial_thickness_nm: Optional[Sequence[float]] = None,
+                   sizes_nm: Sequence[float] = (0.7, 1.5), max_iter: int = 300):
+    """
+    The paper's "simulator", automated: the layered structure (n_layers - 1 layers of unknown thickness on a bulk, each with a
+    composition) whose ACD is closest to `x_meas`, each species keeping its own attenuation length. The compositions of a stack
+    are linear in the intensities, so for each set of thicknesses they are solved exactly (softmax L-BFGS), and a bounded
+    Nelder-Mead simplex searches the thicknesses, started from `initial_thickness_nm` and from equal layers of each of
+    `sizes_nm`. Returns (thickness_nm, compositions[n_layers, species], start profile on the grid, chi2).
+    """
+    x_meas = np.asarray(x_meas, dtype=float)
+    angles = np.asarray(angles_deg, dtype=float)
+    lam = np.asarray(lam_nm, dtype=float)
+    if n_layers < 2:
+        raise ValueError("The simulator needs at least two layers (one on a bulk).")
+    if x_meas.shape != (len(names), len(angles)):
+        raise ValueError("x_meas needs one row per species and one column per angle.")
+    sig = np.maximum(sigma * x_meas, 0.002) if relative_sigma else np.asarray(sigma, dtype=float)
+    state = {"comp": None}
+
+    def cost(th):
+        return _best_compositions(_layer_weights(th, lam, angles), x_meas, sig, state["comp"], max_iter)
+
+    def objective(th):
+        comp, chi2 = cost(th)
+        state["comp"] = comp
+        return chi2
+
+    n_th = n_layers - 1
+    lo, hi = np.full(n_th, 0.05), np.full(n_th, 0.5 * depth_nm)
+    starts = [np.asarray(initial_thickness_nm, dtype=float)] if initial_thickness_nm is not None else []
+    starts += [np.full(n_th, float(sz)) for sz in sizes_nm]
+    best = None
+    for x0 in starts:
+        state["comp"] = None
+        x, v = DL.nelder_mead(objective, np.clip(x0, lo, hi), np.maximum(0.3 * x0, 0.1), lo, hi, max_iter=150, restarts=1)
+        if best is None or v < best[1]:
+            best = (x, v)
+    th = np.asarray(best[0])
+    state["comp"] = None
+    comp, chi2 = cost(th)
+    z = depths(int(round(depth_nm / dz_nm)), dz_nm)
+    return th, comp, layered_model(th, comp, z), float(chi2)
+
+
+def profile_change(a: np.ndarray, b: np.ndarray) -> float:
+    """The mean absolute difference of two profiles' fractions (0.01 = 1 % of composition on average)."""
+    return float(np.mean(np.abs(a - b)))
+
+
+@dataclass
+class ProtocolResult:
+    fit: MemFit                            # the last free-layer (version 1) fit
+    version2: Optional[MemFit]             # the last pseudo-Gaussian (version 2) fit
+    history: List[Dict[str, float]]        # per cycle: chi2/point of version 2 and 1 and the change from the cycle before
+    converged: bool                        # the profile changed by less than CYCLE_TOL in the last cycle
+
+
+def run_protocol(names, angles_deg, x_meas, lam_nm, start: np.ndarray, max_cycles: int = MAX_CYCLES, tol: float = CYCLE_TOL,
+                 alphas: Sequence[float] = DEFAULT_ALPHAS, dz_nm: float = 0.1, window_nm: float = DEPTH_WINDOW_NM,
+                 use_version2: bool = True, fit_kwargs: Optional[dict] = None, **kwargs) -> ProtocolResult:
+    """
+    The paper's cycle: version 2 (`fit_components`) reshapes the start model, version 1 (`fit_mem` with that result as start and
+    prior) lets every layer move, and the pair is repeated, each cycle starting from the last version-1 profile, until the
+    profile changes by less than `tol` (mean absolute fraction) between cycles. `kwargs` (sigma, ke_ev, iterate_imfp, lam_mat,
+    relative_sigma) go to both fits; `fit_kwargs` (free_depth_nm, target_chi2_per_point) only to the free-layer fit.
+    """
+    cur = np.asarray(start, dtype=float)
+    history: List[Dict[str, float]] = []
+    v2 = fit = None
+    converged = False
+    for cycle in range(1, max_cycles + 1):
+        first = cur
+        if use_version2:
+            v2 = fit_components(names, angles_deg, x_meas, lam_nm, cur, dz_nm=dz_nm, window_nm=window_nm, **kwargs)
+            first = v2.n
+        fit = fit_mem(names, angles_deg, x_meas, lam_nm, first, alphas=alphas, dz_nm=dz_nm, **kwargs, **(fit_kwargs or {}))
+        change = profile_change(fit.n, cur)
+        history.append(dict(cycle=float(cycle), chi2_v2=(v2.cycles[0]["chi2_per_point"] if v2 else float("nan")),
+                            chi2_v1=fit.cycles[-1]["chi2_per_point"], change=change))
+        cur = fit.n
+        if change < tol:
+            converged = True
+            break
+    if not converged:
+        fit.notes.append("The profile was still changing by %.1f %% after %d cycles." % (100 * history[-1]["change"], max_cycles))
+    return ProtocolResult(fit, v2, history, converged)
+
+
+def minimum_depth_nm(fit: MemFit, tol: float = CYCLE_TOL) -> float:
+    """
+    The paper's minimum-depth test: the shallowest depth D such that replacing everything below D by the composition of the
+    deepest layer (a constrained bulk) changes no apparent concentration by more than `tol` (relative). Below it the profile
+    only has to be "bulk" as far as these data can tell.
+    """
+    n = fit.n
+    k = kernel(fit.z_nm, fit.lam_ji, fit.angles)
+    full = apparent(n, k)
+    for i in range(2, len(n)):
+        cut = n.copy()
+        cut[i:] = n[-1]
+        if float(np.max(np.abs(apparent(cut, k) - full) / np.maximum(full, 1e-9))) < tol:
+            return float(fit.z_nm[i - 1] + fit.dz_nm)
+    return float(fit.z_nm[-1] + fit.dz_nm)

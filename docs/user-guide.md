@@ -383,7 +383,12 @@ ticked) and, with *Iterate IMFP*, recomputes the attenuation lengths from the co
 profile with the start model dashed, the measured and calculated apparent concentrations, and the relative depth plot; the table lists
 each species' area, peak depth, the attenuation length it sees at the surface and deep down, and its relative depth, and the note
 the χ² per point of each cycle and the interfaces found. *Start-model ensemble* repeats the run from 8 starts with the thicknesses
-varied by ±30 % and shades the spread. G-1 attenuation lengths are for 200-2000 eV, and NIST cautions that they can be off by up to
+varied by ±30 % and shades the spread. *Auto start* does the paper's hand-made "simulator" step for you: it searches the layer
+thicknesses and compositions (for the number of layers set in the start-model box, including the bulk; about a minute) that
+fit the apparent concentrations best and writes them into the start model. *Run protocol* is the paper's cycle: pseudo-Gaussian
+components whose depths may move 0.6 nm, then the free-layer fit, repeated until the profile changes by less than 1 %; the note shows
+each cycle and the *minimum depth*, the depth below which these data cannot tell the profile from bulk. The runs freeze the window
+until they finish. G-1 attenuation lengths are for 200-2000 eV, and NIST cautions that they can be off by up to
 50 % for some materials: choose *own λ per species* to use the lengths on the species table instead. The paper tested the method on
 synthetic structures only; treat a profile from real data as one consistent with the measurements, not as the unique answer.
 

@@ -301,5 +301,91 @@ class G1(unittest.TestCase):
         self.assertAlmostEqual(fit.crossing_depth_nm([0, 1]) / th[0], 1.0, delta=0.1)
 
 
+class ProtocolTests(unittest.TestCase):
+    """Phase 2: the component model, the automated simulator, the version-2 / version-1 cycle and the minimum depth."""
+
+    def test_a_component_is_a_flat_top_with_gaussian_edges(self):
+        c = MM.Component(0, 1.0, 2.0, 0.8, 0.1)
+        v = c.values(np.array([0.0, 1.0, 1.5, 2.0, 3.0]))
+        self.assertAlmostEqual(v[0], 0.0, places=5)
+        self.assertAlmostEqual(v[1], 0.4, places=4)              # half height at each edge
+        self.assertAlmostEqual(v[2], 0.8, places=5)
+        self.assertAlmostEqual(v[3], 0.4, places=4)
+        self.assertAlmostEqual(v[4], 0.0, places=5)
+        self.assertFalse(c.to_bottom)
+        self.assertTrue(MM.Component(0, 1.0, 1e3, 1.0, 0.1).to_bottom)
+
+    def test_components_normalise_every_layer_to_one(self):
+        comps = [MM.Component(0, 0.0, 1.0, 1.0, 0.1), MM.Component(1, 1.0, 1e3, 0.7, 0.1)]
+        n = MM.components_profile(comps, Z, 2)
+        self.assertTrue(np.allclose(n.sum(axis=1), 1.0))
+        self.assertGreater(n[3, 0], 0.99)
+        self.assertGreater(n[100, 1], 0.99)
+
+    def test_the_start_model_gives_one_component_per_run_and_skips_absent_species(self):
+        n0 = MM.layered_model([1.0], [(1, 0, 0), (0, 1, 0)], Z)
+        comps = MM.initial_components(n0, Z)
+        self.assertEqual([c.species for c in comps], [0, 1])               # species 2 is not in the start model
+        self.assertAlmostEqual(comps[0].end, 0.95, delta=0.06)
+        self.assertTrue(comps[1].to_bottom)
+
+    def test_the_simulator_recovers_a_bilayer_without_a_start_guess(self):
+        names, th, comp, lam = _structure("4_2+2")
+        x = MM.acd_from_layers(th, comp, lam, MM.PAPER_ANGLES)
+        t, c, start, chi2 = MM.simulate_start(names, MM.PAPER_ANGLES, x, lam, n_layers=2)
+        self.assertAlmostEqual(t[0] / th[0], 1.0, delta=0.02)
+        self.assertTrue(np.allclose(c, np.array(comp), atol=0.02))
+        self.assertEqual(start.shape, (150, 4))
+        with self.assertRaises(ValueError):
+            MM.simulate_start(names, MM.PAPER_ANGLES, x, lam, n_layers=1)
+
+    def test_version_two_moves_the_interface_back_from_a_wrong_start(self):
+        names, th, comp, lam = _structure("4_2+2")
+        x = MM.acd_from_layers(th, comp, lam, MM.PAPER_ANGLES)
+        wrong = MM.layered_model(th * 1.35, comp, Z, floor=0.01)           # 0.56 nm too thick, inside the +-0.6 nm window
+        fit = MM.fit_components(names, MM.PAPER_ANGLES, x, lam, wrong, iterate_imfp=False)
+        self.assertIsNotNone(fit.components)
+        self.assertTrue(np.allclose(fit.n.sum(axis=1), 1.0))
+        self.assertAlmostEqual(fit.crossing_depth_nm([0, 1]) / th[0], 1.0, delta=0.05)
+        self.assertLess(fit.cycles[0]["chi2_per_point"], 0.01)
+
+    def test_the_window_is_extended_when_a_depth_reaches_its_limit(self):
+        names, th, comp, lam = _structure("4_2+2")
+        x = MM.acd_from_layers(th, comp, lam, MM.PAPER_ANGLES)
+        far = MM.layered_model(th * 1.9, comp, Z, floor=0.01)              # 1.4 nm out: more than one window
+        fit = MM.fit_components(names, MM.PAPER_ANGLES, x, lam, far, iterate_imfp=False, window_nm=0.5)
+        self.assertAlmostEqual(fit.crossing_depth_nm([0, 1]) / th[0], 1.0, delta=0.08)
+
+    def test_the_protocol_converges_and_reports_its_cycles(self):
+        names, th, comp, lam = _structure("4_2+2")
+        x = MM.add_acd_error(MM.acd_from_layers(th, comp, lam, MM.PAPER_ANGLES), 0.10, seed=2)
+        start = MM.layered_model(th * 1.25, comp, Z, floor=0.01)
+        res = MM.run_protocol(names, MM.PAPER_ANGLES, x, lam, start, iterate_imfp=False, max_cycles=4)
+        self.assertTrue(res.converged)
+        self.assertLess(res.history[-1]["change"], MM.CYCLE_TOL)
+        self.assertGreaterEqual(len(res.history), 1)
+        self.assertAlmostEqual(res.fit.crossing_depth_nm([0, 1]) / th[0], 1.0, delta=0.15)
+        plain = MM.run_protocol(names, MM.PAPER_ANGLES, x, lam, start, iterate_imfp=False, max_cycles=1, use_version2=False)
+        self.assertIsNone(plain.version2)
+
+    def test_automatic_start_and_protocol_find_the_paper_structure_from_the_data_alone(self):
+        names, th, comp, lam = _structure("4_2+2")
+        x = MM.add_acd_error(MM.acd_from_layers(th, comp, lam, MM.PAPER_ANGLES), 0.10, seed=5)
+        _, _, start, _ = MM.simulate_start(names, MM.PAPER_ANGLES, x, lam, n_layers=2)
+        res = MM.run_protocol(names, MM.PAPER_ANGLES, x, lam, start, iterate_imfp=False, max_cycles=3)
+        self.assertAlmostEqual(res.fit.crossing_depth_nm([0, 1]) / th[0], 1.0, delta=0.15)       # the paper's +-10 % (<= 20 %)
+        self.assertGreater(res.fit.n[3, 0] + res.fit.n[3, 1], 0.9)                                # the overlayer is A and B
+
+    def test_the_minimum_depth_is_below_the_profile_depth_and_grows_with_deeper_structure(self):
+        names, th, comp, lam = _structure("4_2+2")
+        x = MM.acd_from_layers(th, comp, lam, MM.PAPER_ANGLES)
+        fit = MM.fit_mem(names, MM.PAPER_ANGLES, x, lam, MM.layered_model(th * 1.05, comp, Z, floor=0.01), iterate_imfp=False,
+                         sigma=0.02)
+        d = MM.minimum_depth_nm(fit)
+        self.assertGreater(d, th[0])
+        self.assertLess(d, 15.0)
+        self.assertGreater(MM.minimum_depth_nm(fit, tol=0.001), d)
+
+
 if __name__ == "__main__":
     unittest.main()

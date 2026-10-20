@@ -739,6 +739,20 @@ class DepthTabSmoke(unittest.TestCase):
         depths = [d for d, _, _ in f.interfaces()]
         self.assertTrue(0.5 < depths[0] < 1.5 and 1.8 < depths[1] < 3.0, depths)        # layers of 0.8 and 1.5 nm
 
+    def test_the_mem_page_auto_start_and_protocol(self):
+        app, tab = self._stack()
+        tab.mem_rel.set("5")
+        tab.mem_alphas.set("10, 1")
+        tab._mem_auto_start()
+        self.assertIn("Start model found", tab.mem_note.get())
+        self.assertEqual(len(tab.mem_layer_rows), 3)
+        self.assertGreater(float(tab.mem_layer_rows[0]["thick"].get()), 0.0)
+        tab._mem_protocol()
+        self.assertIn("Protocol", tab.mem_note.get())
+        self.assertIn("Minimum depth", tab.mem_note.get())
+        self.assertIsNotNone(tab.mem_fit)
+        self.assertEqual(len(tab.mem_table.get_children()), 3)
+
     def test_the_mem_page_options_and_errors(self):
         import depth_tab as DTM
         app, tab = self._stack()
