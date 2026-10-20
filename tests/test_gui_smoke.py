@@ -851,7 +851,7 @@ class DaxpesTabSmoke(unittest.TestCase):
         app, tab = self._tab()
         tab.calculate()
         res = tab.result[0]
-        self.assertAlmostEqual(res.d_nm, self.D, delta=0.15)
+        self.assertAlmostEqual(res.d_nm, self.D, delta=0.25)             # window and Shirley choices move d by ~6 %
         self.assertAlmostEqual(res.coverage, self.COV, delta=0.03)
         self.assertEqual(tab.readout_var.get(), f"{res.d_nm:.2f} nm")
         self.assertIn("coverage", tab.readout_sub_var.get())

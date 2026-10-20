@@ -174,7 +174,7 @@ DAXPES_REGIONS = ("Ti 2p film", "Ti 2p reference")
 
 def daxpes_pair(d_nm: float = 3.0, cov: float = 0.6, lam_soft: float = 1.87, lam_hard: float = 3.77,
                 theta: float = 0.0, iinf_soft: float = 20000.0, iinf_hard: float = 6000.0, centre: float = 458.8,
-                fwhm: float = 1.2, noise: bool = False, seed: int = 1, step: float = 0.1) -> dict:
+                fwhm: float = 1.2, noise: bool = False, seed: int = 1, step: float = 0.1, scans: int = 100) -> dict:
     """
     {"soft": [film block, reference block], "hard": [...]} for one core level (Ti 2p3/2-like) with a film of thickness
     `d_nm` covering a fraction `cov` of the analysed area, measured at take-off angle `theta` (from the normal) with each
@@ -192,9 +192,14 @@ def daxpes_pair(d_nm: float = 3.0, cov: float = 0.6, lam_soft: float = 1.87, lam
                              (DAXPES_REGIONS[1], iinf)):
             sig = area * sim.pseudo_voigt(be, centre, fwhm, 0.0)
             bg = sim.shirley_background(sig, step=0.05 * area, base=0.02 * iinf / 10.0)
-            blk = _block(region, "Ti 2p", hv, be, sig + bg, theta, None, noise, rng)
-            blk.sample_id = f"synthetic {label}"
-            blocks.append(blk)
+            counts = np.maximum(sig + bg, 0.0) * scans * DWELL_S
+            if noise:
+                counts = rng.poisson(counts).astype(float)
+            blocks.append(VM.Block(block_id=region, sample_id=f"synthetic {label}", species="Ti 2p", technique="XPS",
+                                   hv_ev=hv, be_ev=be, counts=counts, transmission=np.full_like(be, TRANSMISSION),
+                                   dwell_s=DWELL_S, scans=scans, pass_energy_ev=50.0, exp_values=[theta, None],
+                                   exp_labels=["Tilt", "Azimuth"], exp_units=["d", "d"],
+                                   comments=["Synthetic data: not a measurement"]))
         out[key] = blocks
     return out
 

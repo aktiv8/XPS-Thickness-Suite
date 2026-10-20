@@ -26,6 +26,9 @@ SOFT_COLOUR, HARD_COLOUR = "#2563eb", "#d97706"
 SLOTS = (("samp_soft", "Film, soft source"), ("samp_hard", "Film, hard source"),
          ("ref_soft", "Thick reference, soft"), ("ref_hard", "Thick reference, hard"))
 NO_REGION = "(none)"
+WINDOW_SEARCH_EV = 20.0      # the auto window looks this far either side of the nominal peak energy
+WINDOW_MIN_HALF_EV = 6.0     # and is never narrower than this either side of it
+WINDOW_PAD_EV = 3.0          # padding around the part of the signal above 10 % of its range
 CUSTOM = "custom (type the values)"
 METHOD_AREA = "Peak areas (Eq. 6)"
 METHOD_BG = "Inelastic background B1 (Eqs. 7-8)"
@@ -98,7 +101,7 @@ class DaxpesTab(ttk.Frame):
         top = ttk.Frame(card, style="Card.TFrame")
         top.grid(row=0, column=0, sticky="ew")
         ttk.Label(top, text="Method:", style="Card.TLabel").pack(side="left")
-        mcb = ttk.Combobox(top, textvariable=self.method, values=[METHOD_AREA, METHOD_BG, METHOD_BOTH], state="readonly", width=34)
+        mcb = ttk.Combobox(top, textvariable=self.method, values=[METHOD_AREA, METHOD_BG, METHOD_BOTH], state="readonly", width=42)
         mcb.pack(side="left", padx=6)
         mcb.bind("<<ComboboxSelected>>", lambda e: self._method_changed())
         Tooltip(mcb, "Peak areas: the film and thick-reference peak areas of each source (Eq. 6), which needs a reference "
@@ -358,9 +361,16 @@ class DaxpesTab(ttk.Frame):
         if nominal is None:
             nominal = float(be[int(np.argmax(AR.smooth(y)))])
             self.v["be"].set(f"{nominal:.2f}")
-        win = AR.auto_peak_window([(be, y)], nominal, below_ev=4.0, above_ev=4.0)
-        self.v["w_lo"].set(f"{win.lo:.2f}")
-        self.v["w_hi"].set(f"{win.hi:.2f}")
+        # the peak and its tails: the envelope of the signal near the nominal energy, padded, and never narrower than
+        # +-WINDOW_MIN_HALF_EV (a doublet such as Ti 2p has its second component 5-6 eV away)
+        near = np.abs(be - nominal) <= WINDOW_SEARCH_EV
+        if near.sum() < 20:
+            raise ValueError("The spectrum does not cover the peak energy.")
+        env = DP.auto_envelope(be[near], y[near], edge_ev=0.5, level=0.10, pad_ev=WINDOW_PAD_EV)
+        lo = max(min(env.lo, nominal - WINDOW_MIN_HALF_EV), float(be[0]) + 0.5)
+        hi = min(max(env.hi, nominal + WINDOW_MIN_HALF_EV), float(be[-1]) - 0.5)
+        self.v["w_lo"].set(f"{lo:.2f}")
+        self.v["w_hi"].set(f"{hi:.2f}")
 
     def _auto_clicked(self):
         try:

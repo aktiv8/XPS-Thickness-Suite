@@ -726,7 +726,7 @@ and the coverage far more than an error in both lengths together (which scales $
 unchanged), so the details box lists the thickness and coverage for $\lambda_H$ alone and for both lengths changed by $\pm 10$ %;
 for the synthetic example a 10 % change of $\lambda_H$ alone moves 3.0 nm to 2.1-3.7 nm and the coverage from 70 % to 55 %,
 while changing both by 10 % gives 2.7-3.3 nm and the same 60 %. Against the lengths in Murdoch's Table 1 the Seah curve is 18 % below to 6 % above, and
-TPP-2M times 0.9 within 15 %, which is the scatter to expect from either; for another material, type the lengths in. The peak areas come from the same windows and
+TPP-2M times 0.9 within 15 %, which is the scatter to expect from either; for another material, type the lengths in. The quoted error is the counting-statistics part only: on the synthetic sample the choice of window (half-width 3 to 7 eV) and the Shirley end points move the area-method thickness by about 6 % (2.8 to 3.2 nm for a true 3.0 nm), more than the 0.05 nm statistical error, so repeat the calculation with a few windows before quoting a precision. The auto window is the envelope of the signal near the peak energy, padded by 3 eV and never narrower than 6 eV either side of it (a doublet such as Ti 2p has its second component 5-6 eV away). The peak areas come from the same windows and
 Shirley background as the ARXPS tab, with one window in binding energy for all four spectra; they may also be typed in.
 
 ### Background method
