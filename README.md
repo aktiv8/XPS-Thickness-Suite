@@ -21,6 +21,10 @@ Thickogram nomogram, Topofactor corrections for fibres and particles, and angle-
 
 ![The ARXPS tab analysing a synthetic Si 2p tilt series](docs/images/arxps.png)
 
+![The ARXPS MEMS (Rossi) page on a synthetic C / O / Al stack](docs/images/depth-mems.png)
+
+![The DAXPES tab on a synthetic 3 nm film covering 60 % of the area](docs/images/daxpes.png)
+
 ## Quick start
 
 The calculation itself needs only Python 3 with Tkinter (included in the standard Windows installer). The simulated
@@ -87,7 +91,8 @@ display skip themselves when they are not available.
 - `thickogram.py`, `thickogram_tab.py`: Cumpson's Thickogram (maths, nomogram, tab).
 - `topofactor.py`: the Topofactor correction.
 - `arxps.py`, `arxps_tab.py`: angle-resolved analysis (alignment, Shirley background, areas, fits; the tab).
-- `depthprofile.py`, `depthlayers.py`, `depthreg.py`, `depthmurdoch.py`, `depth_tab.py`: species from a tilt series, the Surrey Trend Plot, Stratification, the Gries layer model and regularised profiles (the Depth profile tab).
+- `depthprofile.py`, `depthlayers.py`, `depthreg.py`, `depthmurdoch.py`, `depthmem.py`, `depth_tab.py`: species from a tilt series, the Surrey Trend Plot, Stratification, the Gries layer model and regularised, Murdoch and maximum-entropy (MEMS) profiles (the Depth profile tab).
+- `daxpes.py`, `daxpes_tab.py`, `tougaard.py`: dual-anode XPS thickness and coverage by peak areas or the Tougaard background (the DAXPES tab).
 - `casa.py`: reader for CasaXPS peak fits stored in VAMAS comments (ported from eXPoSe SpectraDeck).
 - `vamas.py`: VAMAS reader and writer. `synthetic.py`: synthetic tilt series for tests and the sample file.
 - `spectrum_sim.py`: simulated spectra (numpy only).

@@ -318,6 +318,8 @@ angle (the definition of the MEMS paper, 1 for a species that does not change wi
 curvature statistic; the note warns about a species that may sit in two layers (it is averaged) and about species whose
 kinetic energies differ so much that their attenuation lengths do too.
 
+![The Relative depth page for a C / O / Al layer stack: the species ordered from the surface down](images/depth-rdp.png)
+
 ### Layers (Gries)
 
 Put each species in a layer, from 1 at the top to *Sub* for the substrate, and the
@@ -393,11 +395,15 @@ until they finish. G-1 attenuation lengths are for 200-2000 eV, and NIST caution
 50 % for some materials: choose *own λ per species* to use the lengths on the species table instead. The paper tested the method on
 synthetic structures only; treat a profile from real data as one consistent with the measurements, not as the unique answer.
 
+![The ARXPS MEMS (Rossi) page after Auto start and Run protocol on a synthetic C / O / Al stack: depth profile, measured and calculated apparent concentrations, relative depth plot and table](images/depth-mems.png)
+
 ## The DAXPES tab
 
 Use this when a film may not cover the whole analysed area (islands, patterned oxide, a wafer with a partly grown layer) and
 the instrument has two X-ray sources, a soft one (Al Kα) and a hard one (Ag Lα or Ga Kα). It measures **one core level with each
 source** and gives the film **thickness**, which does not depend on the coverage, and the **coverage** itself [24].
+
+![The DAXPES tab on the synthetic 3 nm film covering 60 % of the area: the thickness, the coverage and the two curves](images/daxpes.png)
 
 1. Open four spectra with the buttons on the Data card: the film with the soft source, the film with the hard source, and a
    thick reference of the same material with each source. A file can hold both the film and the reference regions: open it for
@@ -447,7 +453,8 @@ the joint fit gives 6.1 ± 0.4 nm with a ratio of 2.07 ± 0.08 (true 2.02).
 | Overlayer and substrate are different elements or different peaks, flat sample | Thickogram tab, shape Flat |
 | Coating on a micro-scale fibre or particle | Thickogram tab with a Topofactor |
 | A tilt series (several emission angles) in a VAMAS file | ARXPS tab |
-| Where several species sit in depth, from a tilt series | Depth profile tab |
+| Where several species sit in depth, from a tilt series | Depth profile tab (start with Relative depth and Stratification) |
+| A depth profile with three or more species, as a curve rather than layers | Depth profile tab, ARXPS MEMS (Rossi) page (needs a reasonable start model; Auto start can find one) |
 | A film that may cover only part of the area, on an instrument with a soft and a hard X-ray source | DAXPES tab |
 | Nanoparticles or nanofibres | Neither: the Topofactor model is not valid at this scale |
 
