@@ -84,6 +84,13 @@ try:
 except Exception:
     HAVE_ARXPS = False
 
+# The Batch tab (Strohmeier for every sample of a CasaXPS-fitted VAMAS file), same optional packages.
+try:
+    from batch_tab import BatchTab
+    HAVE_BATCH = HAVE_PLOT
+except Exception:
+    HAVE_BATCH = False
+
 # The depth-profile tab (trend plot, stratification, layers, regularisation), same optional packages.
 try:
     from depth_tab import DepthTab
@@ -711,12 +718,14 @@ class App(tk.Tk):
         self.calc_tab = ttk.Frame(nb)
         self.thick_tab = ttk.Frame(nb)
         self.arxps_tab = ttk.Frame(nb)
+        self.batch_tab = ttk.Frame(nb)
         self.depth_tab = ttk.Frame(nb)
         self.daxpes_tab = ttk.Frame(nb)
         self.help_tab = ttk.Frame(nb)
         nb.add(self.calc_tab, text="Calculator & simulation")
         nb.add(self.thick_tab, text="Thickogram (different core levels)")
         nb.add(self.arxps_tab, text="ARXPS (tilt series)")
+        nb.add(self.batch_tab, text="Batch (VAMAS)")
         nb.add(self.depth_tab, text="Depth profile (ARXPS)")
         nb.add(self.daxpes_tab, text="DAXPES (two X-ray sources)")
         nb.add(self.help_tab, text="Method / References")
@@ -728,6 +737,7 @@ class App(tk.Tk):
         self._build_calc_tab()
         self._build_thickogram_tab()
         self._build_arxps_tab()
+        self._build_batch_tab()
         self._build_depth_tab()
         self._build_daxpes_tab()
         self._build_help_tab()
@@ -1285,6 +1295,17 @@ class App(tk.Tk):
             return
         self.arxps = ARXPSTab(self.arxps_tab, self, SUBSTRATES, OVERLAYERS, volume_density, compact=self.compact)
         self.arxps.pack(fill="both", expand=True, padx=8)
+
+    def _build_batch_tab(self):
+        """Strohmeier thickness for every sample of a CasaXPS-fitted VAMAS file. Needs numpy + matplotlib."""
+        if not HAVE_BATCH:
+            ttk.Label(self.batch_tab, justify="left", padding=20,
+                      text="The Batch tab needs numpy and matplotlib:\n\n"
+                           "    pip install numpy matplotlib\n\n"
+                           "then restart the app. The Calculator tab works without them.").pack(anchor="nw")
+            return
+        self.batch = BatchTab(self.batch_tab, self, SUBSTRATES, OVERLAYERS, volume_density, compact=self.compact)
+        self.batch.pack(fill="both", expand=True, padx=8)
 
     def _build_depth_tab(self):
         """Depth distribution of several species from a tilt series. Needs numpy + matplotlib."""

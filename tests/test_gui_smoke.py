@@ -43,13 +43,13 @@ def _make_app(testcase):
 
 @unittest.skipUnless(HAVE_DISPLAY and TT is not None, "needs a display and numpy + matplotlib")
 class ThickogramTabSmoke(unittest.TestCase):
-    def test_window_has_the_six_tabs_and_the_suite_title(self):
+    def test_window_has_the_seven_tabs_and_the_suite_title(self):
         app = _make_app(self)
         self.assertEqual(app.title(), "XPS Thickness Suite")
         nb = app.nametowidget(app.calc_tab.winfo_parent())
         self.assertEqual([nb.tab(i, "text") for i in range(nb.index("end"))],
                          ["Calculator & simulation", "Thickogram (different core levels)", "ARXPS (tilt series)",
-                          "Depth profile (ARXPS)", "DAXPES (two X-ray sources)", "Method / References"])
+                          "Batch (VAMAS)", "Depth profile (ARXPS)", "DAXPES (two X-ray sources)", "Method / References"])
 
     def test_example_reproduces_the_library_result(self):
         app = _make_app(self)
