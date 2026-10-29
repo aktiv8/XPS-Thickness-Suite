@@ -149,6 +149,40 @@ class SiliconPresets(unittest.TestCase):
         self.assertAlmostEqual(rows[0].d_nm, 1.83, delta=0.05)      # the ARXPS tab gave 1.72 nm
 
 
+class TiltSeries(unittest.TestCase):
+    def test_takeoff_angle_is_90_minus_tilt_plus_offset(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "si.vms")
+            VM.write(path, S.two_state_series(d_nm=1.5, fitted=True, tilts=(0.0, 30.0, 60.0)))
+            vf = VM.read(path)
+        samples, _ = B.collect(vf, "Si2p Scan")
+        self.assertEqual(B.takeoff_angles(vf, samples, "exp1"), [90.0, 60.0, 30.0])
+        self.assertEqual(B.takeoff_angles(vf, samples, "exp1", 2.0), [88.0, 58.0, 28.0])
+        self.assertEqual(B.takeoff_angles(vf, samples, "exp2"), [None, None, None])
+        states = B.fit_states(samples)
+        args = (B.guess_roles(states), A.SUBSTRATES["Si (metal/elemental)"], {states[1].key: A.OVERLAYERS["SiO2"]})
+        rows = B.compute(samples, *args, B.takeoff_angles(vf, samples, "exp1"), A.volume_density)
+        for row, theta in zip(rows, (90.0, 60.0, 30.0)):
+            self.assertEqual(row.theta_deg, theta)
+            single = B.compute([row.sample], *args, theta, A.volume_density)[0]
+            self.assertAlmostEqual(row.d_nm, single.d_nm, places=12)
+        none_rows = B.compute(samples, *args, [None, 60.0, 30.0], A.volume_density)
+        self.assertIn("tilt", none_rows[0].error)
+        self.assertIsNotNone(none_rows[1].d_nm)
+        with self.assertRaises(ValueError):
+            B.compute(samples, *args, [90.0], A.volume_density)
+
+    @unittest.skipUnless(os.path.exists(SI_REAL), "the user's Si tilt file is not on this machine")
+    def test_real_si_tilt_series_matches_the_hand_calculation(self):
+        vf = VM.read(SI_REAL)
+        samples, _ = B.collect(vf, "Si2p Scan")
+        states = B.fit_states(samples)
+        rows = B.compute(samples, B.guess_roles(states), A.SUBSTRATES["Si (metal/elemental)"],
+                         {states[1].key: A.OVERLAYERS["SiO2"]}, B.takeoff_angles(vf, samples, "exp1"), A.volume_density)
+        self.assertEqual([r.theta_deg for r in rows], [90.0, 75.0, 60.0, 45.0, 30.0, 15.0])
+        self.assertAlmostEqual(rows[0].d_nm, 1.83, delta=0.05)
+
+
 try:
     import tkinter as tk
     _probe = tk.Tk()
@@ -175,6 +209,25 @@ class TabSmoke(unittest.TestCase):
         self.assertEqual(len(tab.rows), 3)
         self.assertEqual(len(tab.table.get_children()), 3)
         self.assertTrue(all(r.d_nm > 0 for r in tab.rows))
+
+    def test_tilt_source_is_offered_and_used_for_a_tilt_series(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "si.vms")
+            VM.write(path, S.two_state_series(d_nm=1.5, fitted=True, tilts=(0.0, 30.0, 60.0)))
+            app = A.App()
+            app.withdraw()
+            self.addCleanup(app.destroy)
+            tab = app.batch
+            self.assertTrue(tab.load_file(path))
+        self.assertEqual(tab.angle_src.get(), VM.ANGLE_SOURCES["exp1"])
+        self.assertEqual(str(tab.theta_entry.cget("state")), "disabled")
+        tab.calculate()
+        self.assertEqual([r.theta_deg for r in tab.rows], [90.0, 60.0, 30.0])
+        tab.angle_src.set("One fixed angle")
+        tab._angle_changed()
+        tab.theta.set("45")
+        tab.calculate()
+        self.assertEqual({r.theta_deg for r in tab.rows}, {45.0})
 
 
 if __name__ == "__main__":

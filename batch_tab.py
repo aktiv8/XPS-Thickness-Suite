@@ -19,6 +19,7 @@ from gui_common import ACCENT, BADGE, CARD, MUTED, Tooltip, _to_float
 
 ROLE_TEXT = {B.SUBSTRATE: "Substrate", B.OVERLAYER: "Overlayer", B.IGNORE: "Ignore"}
 TEXT_ROLE = {v: k for k, v in ROLE_TEXT.items()}
+FIXED_ANGLE = "One fixed angle"
 OK_COLOUR, WARN_COLOUR = "#2563eb", "#d97706"
 
 
@@ -36,6 +37,9 @@ class BatchTab(ttk.Frame):
         self.role_vars, self.mat_vars = {}, {}           # state key -> StringVar
         self.region = tk.StringVar()
         self.theta = tk.StringVar(value="90")
+        self.angle_src = tk.StringVar(value=FIXED_ANGLE)
+        self.offset = tk.StringVar(value="0")
+        self._src_by_label = {}
         self.sub_preset = tk.StringVar()
         self.file_label = tk.StringVar(value="No file loaded")
         self.info = tk.StringVar(value="")
@@ -71,10 +75,24 @@ class BatchTab(ttk.Frame):
         ttk.Label(grid, text="Take-off angle (°):", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=2)
         e = ttk.Entry(grid, textvariable=self.theta, width=7)
         e.grid(row=1, column=1, sticky="w", padx=6, pady=2)
+        self.theta_entry = e
         Tooltip(e, "Measured from the SURFACE, 90 = normal emission (the K-Alpha at zero tilt).")
-        ttk.Label(grid, text="Substrate:", style="Card.TLabel").grid(row=2, column=0, sticky="w", pady=2)
+        ttk.Label(grid, text="Angle from:", style="Card.TLabel").grid(row=2, column=0, sticky="w", pady=2)
+        self.angle_cb = ttk.Combobox(grid, textvariable=self.angle_src, values=[FIXED_ANGLE], state="readonly",
+                                     width=24)
+        self.angle_cb.grid(row=2, column=1, sticky="w", padx=6, pady=2)
+        self.angle_cb.bind("<<ComboboxSelected>>", lambda e: self._angle_changed())
+        Tooltip(self.angle_cb, "One fixed take-off angle for every sample, or the stage tilt stored in each block (a "
+                               "tilt series: one Strohmeier thickness per tilt). The K-Alpha keeps the tilt in "
+                               "experimental variable 1.")
+        ttk.Label(grid, text="Tilt offset (°):", style="Card.TLabel").grid(row=3, column=0, sticky="w", pady=2)
+        self.offset_entry = ttk.Entry(grid, textvariable=self.offset, width=7)
+        self.offset_entry.grid(row=3, column=1, sticky="w", padx=6, pady=2)
+        Tooltip(self.offset_entry, "Added to the tilt to give the emission angle from the surface normal; the take-off "
+                                   "angle is 90 minus that. 0 for a tilt measured from normal emission.")
+        ttk.Label(grid, text="Substrate:", style="Card.TLabel").grid(row=4, column=0, sticky="w", pady=2)
         cb = ttk.Combobox(grid, textvariable=self.sub_preset, values=list(self.substrates), state="readonly", width=24)
-        cb.grid(row=2, column=1, sticky="w", padx=6, pady=2)
+        cb.grid(row=4, column=1, sticky="w", padx=6, pady=2)
         Tooltip(cb, "Density, molar mass and IMFP of the substrate (the Calculator presets).")
 
         ttk.Label(f, text="Fitted states", style="Card.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 0))
@@ -112,9 +130,9 @@ class BatchTab(ttk.Frame):
         toolbar.pack(side="bottom", fill="x")
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
 
-        cols = ("sample", "isub", "iov", "ratio", "d", "da", "ok")
-        heads = ("Sample", "I substrate", "I overlayer", "I ov / I sub", "d (nm)", "d (Å)", "Validity / note")
-        widths = (230, 90, 90, 80, 70, 70, 180)
+        cols = ("sample", "theta", "isub", "iov", "ratio", "d", "da", "ok")
+        heads = ("Sample", "θ (°)", "I substrate", "I overlayer", "I ov / I sub", "d (nm)", "d (Å)", "Validity / note")
+        widths = (220, 55, 90, 90, 80, 70, 70, 170)
         self.table = ttk.Treeview(frame, columns=cols, show="headings", height=6 if self.compact else 9)
         for c, h, w in zip(cols, heads, widths):
             self.table.heading(c, text=h)
@@ -175,19 +193,38 @@ class BatchTab(ttk.Frame):
                               width=10)
             cb.grid(row=r, column=1, padx=4, pady=2)
             self.role_vars[st.key] = rv
-            mv = tk.StringVar(value=self._guess_material(st.name, self.overlayers))
+            mv = tk.StringVar(value=self._guess_material(st.name, self.overlayers)
+                              or self._guess_material(self.region.get(), self.overlayers))
             mcb = ttk.Combobox(self.states_frame, textvariable=mv, state="readonly", width=16,
                                values=[k for k, v in self.overlayers.items() if v is not None])
             mcb.grid(row=r, column=2, padx=4, pady=2)
             Tooltip(mcb, "Material of this state when it is an overlayer (density, molar mass, IMFP).")
             self.mat_vars[st.key] = mv
             if roles[st.key] == B.SUBSTRATE:
-                sub_default = self._guess_material(st.name, self.substrates)
+                sub_default = (self._guess_material(st.name, self.substrates)
+                               or self._guess_material(self.region.get(), self.substrates))
         self.sub_preset.set(sub_default)
+        self._fill_angle_sources()
         self._fill_table()
         self._draw()
         self._set_badge("ok" if self.samples else "warn", "Check the roles and materials, then Calculate all."
                         if self.samples else "No fitted samples in this region.")
+
+    def _fill_angle_sources(self):
+        """Offer the tilt sources that the region's blocks actually hold; a varying one is chosen by default."""
+        region = self.region.get()
+        present = self.file.sources_present(region) if self.file else []
+        self._src_by_label = {VM.ANGLE_SOURCES[s]: s for s in present}
+        self.angle_cb.configure(values=[FIXED_ANGLE] + list(self._src_by_label))
+        best = self.file.default_sources(region)[0] if self.file else None
+        varies = best is not None and len({b.value(best) for b in self.file.blocks_of(region)}) > 1
+        self.angle_src.set(VM.ANGLE_SOURCES[best] if varies else FIXED_ANGLE)
+        self._angle_changed()
+
+    def _angle_changed(self):
+        fixed = self.angle_src.get() == FIXED_ANGLE
+        self.theta_entry.configure(state="normal" if fixed else "disabled")
+        self.offset_entry.configure(state="disabled" if fixed else "normal")
 
     @staticmethod
     def _guess_material(state_name, presets):
@@ -209,10 +246,17 @@ class BatchTab(ttk.Frame):
         if not self.samples:
             self._set_badge("warn", "Open a fitted VAMAS file first.")
             return
-        theta = _to_float(self.theta.get())
-        if theta is None or not (0 < theta <= 90):
-            messagebox.showerror("Input error", "The take-off angle must be between 0 and 90 degrees.")
-            return
+        if self.angle_src.get() == FIXED_ANGLE:
+            theta = _to_float(self.theta.get())
+            if theta is None or not (0 < theta <= 90):
+                messagebox.showerror("Input error", "The take-off angle must be between 0 and 90 degrees.")
+                return
+        else:
+            offset = _to_float(self.offset.get())
+            if offset is None:
+                messagebox.showerror("Input error", "The tilt offset must be a number.")
+                return
+            theta = B.takeoff_angles(self.file, self.samples, self._src_by_label[self.angle_src.get()], offset)
         sub = self.substrates.get(self.sub_preset.get())
         if sub is None:
             messagebox.showerror("Input error", "Choose a substrate material.")
@@ -246,26 +290,33 @@ class BatchTab(ttk.Frame):
         self.table.delete(*self.table.get_children())
         if not self.rows:
             for s in self.samples:
-                self.table.insert("", "end", values=(s.sample_id, "", "", "", "", "", ""))
+                self.table.insert("", "end", values=(s.sample_id, "", "", "", "", "", "", ""))
             return
         for r in self.rows:
             if r.d_nm is None:
-                self.table.insert("", "end", values=(r.sample.sample_id, f"{r.i_sub:.6g}" if r.i_sub else "-",
+                self.table.insert("", "end", values=(r.sample.sample_id, self._theta_text(r),
+                                                     f"{r.i_sub:.6g}" if r.i_sub else "-",
                                                      f"{r.i_ov:.6g}" if r.i_ov else "-", "-", "-", "-", r.error))
                 continue
             note = "within ~3λ" if r.within_validity else f"EXCEEDS ~3λ ({r.validity_limit_nm:.1f} nm)"
-            self.table.insert("", "end", values=(r.sample.sample_id, f"{r.i_sub:.6g}", f"{r.i_ov:.6g}",
+            self.table.insert("", "end", values=(r.sample.sample_id, self._theta_text(r), f"{r.i_sub:.6g}",
+                                                 f"{r.i_ov:.6g}",
                                                  f"{r.i_ov / r.i_sub:.4f}", f"{r.d_nm:.3f}", f"{r.d_nm * 10:.2f}",
                                                  note))
 
+    @staticmethod
+    def _theta_text(r):
+        return "-" if r.theta_deg is None else f"{r.theta_deg:g}"
+
     def _table_lines(self):
-        head = ["Sample", "I substrate", "I overlayer", "I ov / I sub", "d (nm)", "d (Angstrom)", "Validity / note"]
+        head = ["Sample", "Take-off angle (deg)", "I substrate", "I overlayer", "I ov / I sub", "d (nm)", "d (Angstrom)", "Validity / note"]
         out = [head]
         for r in self.rows:
             if r.d_nm is None:
-                out.append([r.sample.sample_id, r.i_sub, r.i_ov, "", "", "", r.error])
+                out.append([r.sample.sample_id, self._theta_text(r), r.i_sub, r.i_ov, "", "", "", r.error])
             else:
-                out.append([r.sample.sample_id, r.i_sub, r.i_ov, round(r.i_ov / r.i_sub, 5), round(r.d_nm, 4),
+                out.append([r.sample.sample_id, self._theta_text(r), r.i_sub, r.i_ov, round(r.i_ov / r.i_sub, 5),
+                            round(r.d_nm, 4),
                             round(r.d_nm * 10, 3), "within 3 lambda" if r.within_validity else "exceeds 3 lambda"])
         return out
 
@@ -300,7 +351,12 @@ class BatchTab(ttk.Frame):
             ax.bar(xs, [r.d_nm for r in done],
                    color=[OK_COLOUR if r.within_validity else WARN_COLOUR for r in done])
             ax.set_xticks(xs)
-            ax.set_xticklabels([r.sample.sample_id for r in done], rotation=60, ha="right", fontsize=7)
+            tilted = self.angle_src.get() != FIXED_ANGLE
+            one_sample = len({r.sample.sample_id for r in done}) == 1
+            ax.set_xticklabels([(f"θ = {r.theta_deg:g}°" if one_sample else f"{r.sample.sample_id}  θ={r.theta_deg:g}°")
+                                if tilted else r.sample.sample_id for r in done],
+                               rotation=60 if not (tilted and one_sample) else 0, ha="right" if not (tilted and one_sample)
+                               else "center", fontsize=7 if not (tilted and one_sample) else 9)
             ax.set_ylabel("Overlayer thickness d (nm)")
             ax.grid(axis="y", alpha=0.3)
             fig.subplots_adjust(bottom=0.38, left=0.09, right=0.98, top=0.95)

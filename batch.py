@@ -41,6 +41,7 @@ class Row:
     validity_limit_nm: Optional[float] = None
     within_validity: Optional[bool] = None
     error: str = ""
+    theta_deg: Optional[float] = None
 
 
 def collect(vf, region: str) -> Tuple[List[Sample], int]:
@@ -87,10 +88,23 @@ def guess_roles(states: Sequence[StateInfo]) -> Dict[str, str]:
     return {s.key: (SUBSTRATE if i == 0 else OVERLAYER) for i, s in enumerate(ordered)}
 
 
-def compute(samples: Sequence[Sample], roles: Dict[str, str], substrate, overlayers: Dict[str, object],
-            theta_deg: float, volume_density) -> List[Row]:
+def takeoff_angles(vf, samples: Sequence[Sample], source: str, offset_deg: float = 0.0) -> List[Optional[float]]:
     """
-    One Row per sample. `substrate` is a Compound preset; `overlayers` maps each overlayer state key to its Compound
+    Take-off angle from the SURFACE for each sample, 90 - (tilt + offset), where the tilt is read from the block field
+    `source` (a key of vamas.ANGLE_SOURCES; the K-Alpha keeps the stage tilt in "exp1"). None where the block has no value.
+    """
+    out = []
+    for s in samples:
+        tilt = vf.blocks[s.index].value(source)
+        out.append(None if tilt is None else 90.0 - (tilt + offset_deg))
+    return out
+
+
+def compute(samples: Sequence[Sample], roles: Dict[str, str], substrate, overlayers: Dict[str, object],
+            theta_deg, volume_density) -> List[Row]:
+    """
+    One Row per sample. `theta_deg` is one take-off angle for all samples or a list with one per sample (see
+    takeoff_angles). `substrate` is a Compound preset; `overlayers` maps each overlayer state key to its Compound
     preset; `volume_density` is app.volume_density. Several overlayer states are intensity-weighted, as in the
     Calculator tab (oxide + hydroxide).
     """
@@ -108,10 +122,16 @@ def compute(samples: Sequence[Sample], roles: Dict[str, str], substrate, overlay
     sub_key = sub_keys[0]
     n_sub = volume_density(substrate.density_g_cm3, substrate.molar_mass_g_mol, substrate.atoms_per_formula)
 
+    thetas = list(theta_deg) if isinstance(theta_deg, (list, tuple)) else [theta_deg] * len(samples)
+    if len(thetas) != len(samples):
+        raise ValueError("Give one take-off angle per sample.")
     rows = []
-    for s in samples:
-        row = Row(s)
+    for s, theta in zip(samples, thetas):
+        row = Row(s, theta_deg=theta)
         rows.append(row)
+        if theta is None:
+            row.error = "no tilt value in the block"
+            continue
         if sub_key not in s.states:
             row.error = f"no '{sub_key}' state in the fit"
             continue
@@ -125,7 +145,7 @@ def compute(samples: Sequence[Sample], roles: Dict[str, str], substrate, overlay
             comps.append(OverlayerInput(m.label, n, m.imfp_nm, m.rsf, s.states[k][1]))
         row.i_ov = sum(c.area for c in comps)
         try:
-            res = strohmeier_thickness(theta_deg, n_sub, substrate.imfp_nm, substrate.rsf, row.i_sub, comps)
+            res = strohmeier_thickness(theta, n_sub, substrate.imfp_nm, substrate.rsf, row.i_sub, comps)
         except ValueError as exc:
             row.error = str(exc)
             continue
