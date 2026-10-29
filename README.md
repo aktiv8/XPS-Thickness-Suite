@@ -24,6 +24,8 @@ Thickogram nomogram, Topofactor corrections for fibres and particles, and angle-
 
 ![The ARXPS MEMS (Rossi) page on a synthetic C / O / Al stack](docs/images/depth-mems.png)
 
+![The Batch tab: Strohmeier thickness for eight synthetic Al samples, each fitted as metal + oxide](docs/images/batch.png)
+
 ![The DAXPES tab on a synthetic 3 nm film covering 60 % of the area](docs/images/daxpes.png)
 
 ## Quick start

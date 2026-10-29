@@ -5,8 +5,9 @@ Regenerate the screenshots used in the documentation by driving the real window.
 
 Windows (it grabs the window rectangle with PIL.ImageGrab) and needs a visible display, numpy and matplotlib. Don't
 touch the mouse while it runs: the window is brought to the front and captured. Writes docs/images/calculator.png,
-calculator-cu.png, thickogram.png, arxps.png, arxps-fit.png, arxps-fitted.png, depth-trend.png, depth-rdp.png, depth-mems.png
-and daxpes.png. The inputs are the worked examples quoted in docs/user-guide.md (the ARXPS and DAXPES ones use the synthetic files
+calculator-cu.png, thickogram.png, arxps.png, arxps-fit.png, arxps-fitted.png, batch.png, depth-trend.png, depth-rdp.png,
+depth-mems.png and daxpes.png. `python docs/make_screenshots.py batch` regenerates only batch.png (a synthetic file of eight Al
+samples, each fitted as Al 2p Metal + Al 2p Oxide, written to a temporary file). The inputs are the worked examples quoted in docs/user-guide.md (the ARXPS and DAXPES ones use the synthetic files
 in docs/sample/; the MEMS page uses a synthetic C / O / Al layer stack written to a temporary file).
 """
 import os
@@ -71,8 +72,30 @@ def fill_calculator(app, substrate, overlayers, sub_area, areas):
     app._on_calculate()
 
 
-def main():
-    os.makedirs(IMAGES, exist_ok=True)
+def batch_shot(app, nb):
+    """The Batch tab on eight synthetic Al samples with an increasing oxide area, fitted as metal + oxide."""
+    import tempfile
+    import numpy as np
+    import synthetic as S
+    import vamas as VM
+    hv, blocks = 1486.68, []
+    for i, oxide in enumerate((9000, 14000, 20000, 27000, 35000, 44000, 56000, 72000), 1):
+        lines = S.casa_fit_lines("Al 2p", hv - 80.0, hv - 68.0, 0.537, [
+            dict(name=name, area=area, ke=hv - be, fwhm=1.0, index=-1, group="Al 2p", rsf=0.537)
+            for name, area, be in (("Al 2p Metal", 10000.0, 72.6), ("Al 2p Oxide", float(oxide), 75.0))])
+        blocks.append(VM.Block(block_id="Al2p Scan", sample_id=f"Al sheet {i}", species="Al", transition="2p", hv_ev=hv,
+                               be_ev=np.linspace(68.0, 80.0, 61), counts=np.ones(61), dwell_s=0.05, scans=6,
+                               comments=lines))
+    path = os.path.join(tempfile.mkdtemp(), "al-oxide-batch.vms")
+    VM.write(path, blocks)
+    nb.select(app.batch_tab)
+    app.batch.load_file(path)
+    app.batch.calculate()
+    settle(app)
+    grab(app, "batch.png")
+
+
+def new_app():
     app = A.App()
     app.geometry(SIZE)
     app.lift()
@@ -80,6 +103,17 @@ def main():
     settle(app, 20)
     app._place_sash()
     settle(app, 10)
+    return app
+
+
+def main():
+    os.makedirs(IMAGES, exist_ok=True)
+    if sys.argv[1:] == ["batch"]:
+        app = new_app()
+        batch_shot(app, app.nametowidget(app.calc_tab.winfo_parent()))
+        app.destroy()
+        return
+    app = new_app()
     nb = app.nametowidget(app.calc_tab.winfo_parent())
 
     nb.select(app.calc_tab)
@@ -132,6 +166,8 @@ def main():
     tab.plot_nb.select(0)
     settle(app)
     grab(app, "arxps-fitted.png")
+
+    batch_shot(app, nb)                               # the Batch tab on a synthetic multi-sample Al file
 
     nb.select(app.depth_tab)                          # the Depth profile tab on the fitted synthetic series
     tab = app.depth
