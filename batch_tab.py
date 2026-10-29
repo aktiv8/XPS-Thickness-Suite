@@ -191,10 +191,12 @@ class BatchTab(ttk.Frame):
 
     @staticmethod
     def _guess_material(state_name, presets):
-        """First preset whose core level (e.g. 'Al 2p') appears in the state name ('Al 2p Metal')."""
+        """First preset whose core level ('Al 2p', 'Si 2p3/2' -> 'Si 2p') appears in the state name ('Al 2p Metal')."""
         n = _norm(state_name)
         for key, comp in presets.items():
-            if comp is not None and _norm(comp.core_level) in n:
+            level = _norm(comp.core_level).split("/")[0].rstrip("0123456789") if comp is not None else ""
+            level = level or ("" if comp is None else _norm(comp.core_level))
+            if level and level in n:
                 return key
         return ""
 

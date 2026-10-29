@@ -109,6 +109,46 @@ class RealFile(unittest.TestCase):
         self.assertTrue(all(r.d_nm and r.d_nm > 0 for r in rows))
 
 
+SI_REAL = (r"C:\Users\david\Documents\Working Directory\20250626\Dave Morgan\X-Ray014 400um - FG  ON"
+           r"\Stage Tilt ARXPS Si Wafer\Fitted Si tilt.vms")
+
+
+class SiliconPresets(unittest.TestCase):
+    """SiO2 on Si works like Al2O3 on Al: the preset guess must not land on SiC or the blank entry."""
+
+    def test_material_guess_for_si_and_al(self):
+        try:
+            from batch_tab import BatchTab
+        except Exception:
+            self.skipTest("needs numpy + matplotlib")
+        for el, ox, sub, ovl in (("Si 2p El", "Si 2p Ox", "Si (metal/elemental)", "SiO2"),
+                                 ("Al 2p Metal", "Al 2p Oxide", "Al (metal)", "Al2O3")):
+            self.assertEqual(BatchTab._guess_material(el, A.SUBSTRATES), sub)
+            self.assertEqual(BatchTab._guess_material(ox, A.OVERLAYERS), ovl)
+
+    def test_synthetic_si_series_recovers_the_oxide_thickness(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "si.vms")
+            VM.write(path, S.two_state_series(d_nm=1.5, fitted=True))
+            vf = VM.read(path)
+        samples, _ = B.collect(vf, "Si2p Scan")
+        states = B.fit_states(samples)
+        self.assertEqual(len(states), 2)
+        rows = B.compute(samples[:1], B.guess_roles(states), A.SUBSTRATES["Si (metal/elemental)"],
+                         {states[1].key: A.OVERLAYERS["SiO2"]}, 90.0 - 0.0, A.volume_density)
+        self.assertTrue(0.5 < rows[0].d_nm < 4.0)
+
+    @unittest.skipUnless(os.path.exists(SI_REAL), "the user's Si tilt file is not on this machine")
+    def test_real_si_wafer_zero_tilt(self):
+        vf = VM.read(SI_REAL)
+        samples, _ = B.collect(vf, "Si2p Scan")
+        states = B.fit_states(samples)
+        self.assertEqual([s.name for s in states], ["Si 2p El", "Si 2p Ox"])
+        rows = B.compute(samples[:1], B.guess_roles(states), A.SUBSTRATES["Si (metal/elemental)"],
+                         {states[1].key: A.OVERLAYERS["SiO2"]}, 90.0, A.volume_density)
+        self.assertAlmostEqual(rows[0].d_nm, 1.83, delta=0.05)      # the ARXPS tab gave 1.72 nm
+
+
 try:
     import tkinter as tk
     _probe = tk.Tk()
